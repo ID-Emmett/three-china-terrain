@@ -21,6 +21,12 @@ const NASA_IMAGERY_FILE = path.join(CACHE_ROOT, 'nasa-blue-marble-2004-08-21600.
 const ATTRIBUTION_FILE = path.join(PROJECT_ROOT, 'tools', 'data-pipeline', 'ATTRIBUTION.md');
 const RELIEF_WIDTH = 1024;
 const RELIEF_HEIGHT = 768;
+const RELIEF_TILE_WIDTH = 8192;
+const RELIEF_TILE_HEIGHT = 6144;
+const RELIEF_TILE_SIZE = 512;
+const RELIEF_TILE_GUTTER = 2;
+const RELIEF_TILE_DIRECTORY = 'terrain-relief-tiles';
+const RELIEF_TILE_RESIDENT_COUNT = 36;
 const IMAGERY_WIDTH = 2048;
 const IMAGERY_HEIGHT = 1536;
 const RELIEF_RESIDUAL_RANGE_METERS = 720;
@@ -899,6 +905,102 @@ async function writeGzip(fileName, data) {
   return compressedFileName;
 }
 
+function sampleHeight(source, width, height, x, y) {
+  return source[clamp(y, 0, height - 1) * width + clamp(x, 0, width - 1)];
+}
+
+function multiscaleHeightResidual(source, width, height, x, y) {
+  const center = sampleHeight(source, width, height, x, y);
+  const ring = (radius) => (
+    sampleHeight(source, width, height, x - radius, y)
+    + sampleHeight(source, width, height, x + radius, y)
+    + sampleHeight(source, width, height, x, y - radius)
+    + sampleHeight(source, width, height, x, y + radius)
+  ) * 0.25;
+  const diagonal = (radius) => (
+    sampleHeight(source, width, height, x - radius, y - radius)
+    + sampleHeight(source, width, height, x + radius, y - radius)
+    + sampleHeight(source, width, height, x - radius, y + radius)
+    + sampleHeight(source, width, height, x + radius, y + radius)
+  ) * 0.25;
+  const broad = center * 0.2 + ring(5) * 0.3 + diagonal(9) * 0.2 + ring(15) * 0.3;
+  return clamp((center - broad) / RELIEF_RESIDUAL_RANGE_METERS, -1, 1);
+}
+
+function encodeTerrainNormal(output, offset, source, width, height, x, y) {
+  const slopeX = (
+    sampleHeight(source, width, height, x + 1, y)
+    - sampleHeight(source, width, height, x - 1, y)
+  ) * REGION_METRICS.sceneUnitsPerMeter / (2 * REGION.sceneWidth / (width - 1));
+  const slopeZ = (
+    sampleHeight(source, width, height, x, y + 1)
+    - sampleHeight(source, width, height, x, y - 1)
+  ) * REGION_METRICS.sceneUnitsPerMeter / (2 * REGION_METRICS.sceneDepth / (height - 1));
+  const inverseLength = 1 / Math.hypot(slopeX, 1, slopeZ);
+  output[offset] = Math.round((clamp(-slopeX * inverseLength, -1, 1) * 0.5 + 0.5) * 255);
+  output[offset + 1] = Math.round((clamp(-slopeZ * inverseLength, -1, 1) * 0.5 + 0.5) * 255);
+}
+
+async function buildReliefTiles(sourceHeights, width, height) {
+  const columns = Math.ceil(width / RELIEF_TILE_SIZE);
+  const rows = Math.ceil(height / RELIEF_TILE_SIZE);
+  const assetSize = RELIEF_TILE_SIZE + RELIEF_TILE_GUTTER * 2;
+  const directory = path.join(OUTPUT_ROOT, RELIEF_TILE_DIRECTORY);
+  await ensureDirectory(directory);
+  let byteLength = 0;
+
+  for (let tileY = 0; tileY < rows; tileY += 1) {
+    for (let tileX = 0; tileX < columns; tileX += 1) {
+      const output = Buffer.alloc(assetSize * assetSize * 4);
+      for (let localY = 0; localY < assetSize; localY += 1) {
+        const sourceY = clamp(
+          tileY * RELIEF_TILE_SIZE + localY - RELIEF_TILE_GUTTER,
+          0,
+          height - 1,
+        );
+        for (let localX = 0; localX < assetSize; localX += 1) {
+          const sourceX = clamp(
+            tileX * RELIEF_TILE_SIZE + localX - RELIEF_TILE_GUTTER,
+            0,
+            width - 1,
+          );
+          const offset = (localY * assetSize + localX) * 4;
+          encodeTerrainNormal(output, offset, sourceHeights, width, height, sourceX, sourceY);
+          const relief = directionalRelief(sourceHeights, width, height, sourceX, sourceY);
+          const residual = multiscaleHeightResidual(
+            sourceHeights,
+            width,
+            height,
+            sourceX,
+            sourceY,
+          );
+          output[offset + 2] = Math.round((relief * 0.5 + 0.5) * 255);
+          output[offset + 3] = Math.round((residual * 0.5 + 0.5) * 255);
+        }
+      }
+      const filePath = path.join(directory, `${tileX}-${tileY}.webp`);
+      await sharp(output, { raw: { width: assetSize, height: assetSize, channels: 4 } })
+        .webp({ lossless: true, effort: 5 })
+        .toFile(filePath);
+      byteLength += (await fs.stat(filePath)).size;
+    }
+    console.log(`Baked relief tile row ${tileY + 1}/${rows}.`);
+  }
+
+  return {
+    urlTemplate: `/data/${RELIEF_TILE_DIRECTORY}/{x}-{y}.webp`,
+    width,
+    height,
+    tileSize: RELIEF_TILE_SIZE,
+    gutter: RELIEF_TILE_GUTTER,
+    columns,
+    rows,
+    maxResidentTiles: RELIEF_TILE_RESIDENT_COUNT,
+    byteLength,
+    format: 'rg-normal-b-light-a-residual',
+  };
+}
+
 async function validateBuildInputs() {
   const downloadManifestPath = path.join(CACHE_ROOT, 'download-manifest.json');
   const requiredFiles = [
@@ -1017,6 +1119,19 @@ async function main() {
   );
   console.log('Baking multiscale terrain relief texture...');
   await buildReliefTexture(reliefHeights, reliefWidth, reliefHeight);
+  console.log('Sampling zoom-8 terrain for the progressive relief tile set...');
+  const { heights: tiledReliefHeights } = buildHeightGrid(
+    detailTerrainTiles,
+    coastMask,
+    RELIEF_TILE_WIDTH,
+    RELIEF_TILE_HEIGHT,
+  );
+  console.log('Baking progressive high-resolution terrain relief tiles...');
+  const reliefTiles = await buildReliefTiles(
+    tiledReliefHeights,
+    RELIEF_TILE_WIDTH,
+    RELIEF_TILE_HEIGHT,
+  );
   console.log('Reprojecting NASA Blue Marble terrain imagery...');
   const terrainImagery = await buildTerrainImagery();
 
@@ -1050,7 +1165,7 @@ async function main() {
   const sizes = Object.fromEntries(await Promise.all(files.map(async (file) => [file, await fileSize(file)])));
 
   await writeJson(path.join(OUTPUT_ROOT, 'scene-manifest.json'), {
-    version: 14,
+    version: 15,
     generatedAt: new Date().toISOString(),
     region: REGION,
     terrain: {
@@ -1060,6 +1175,7 @@ async function main() {
       reliefWidth,
       reliefHeight,
       reliefResidualRangeMeters: RELIEF_RESIDUAL_RANGE_METERS,
+      reliefTiles,
       ...terrainMeta,
     },
     terrainImagery: {

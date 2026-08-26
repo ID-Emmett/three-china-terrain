@@ -17,6 +17,7 @@ import { TerrainData } from '../terrain/TerrainData';
 import { TerrainLayer } from '../terrain/TerrainLayer';
 import { TERRAIN_LOD_RANGES, TERRAIN_SCENE_WIDTH_UNITS } from '../terrain/TerrainLodConfig';
 import { createMapMaskTexture } from '../terrain/MapMaskTexture';
+import { TerrainReliefTileCache } from '../terrain/TerrainReliefTileCache';
 import { TerrainSurfaceBuilder } from '../terrain/TerrainSurfaceBuilder';
 import { WeatherLayer } from '../weather/WeatherLayer';
 import { AssetManifestLoader } from './AssetManifestLoader';
@@ -64,6 +65,7 @@ export class SceneApp {
   private atmosphere!: AtmosphereLayer;
   private terrain!: TerrainLayer;
   private terrainSurfaceBuilder?: TerrainSurfaceBuilder;
+  private terrainReliefTiles?: TerrainReliefTileCache;
   private coastMaskTexture!: THREE.DataTexture;
   private chinaMaskTexture!: THREE.DataTexture;
   private terrainReliefTexture!: THREE.Texture;
@@ -152,6 +154,7 @@ export class SceneApp {
     this.terrainReliefTexture.magFilter = THREE.LinearFilter;
     this.terrainReliefTexture.generateMipmaps = true;
     this.terrainReliefTexture.needsUpdate = true;
+    this.terrainReliefTiles = new TerrainReliefTileCache(this.assets.manifest);
     this.terrainSurfaceBuilder = new TerrainSurfaceBuilder(this.assets.manifest, this.assets.heights);
     const terrainPrepareStartedAt = performance.now();
     const renderHeightResult = await this.terrainSurfaceBuilder.getRenderHeights();
@@ -178,6 +181,7 @@ export class SceneApp {
       this.coastMaskTexture,
       this.chinaMaskTexture,
       this.terrainReliefTexture,
+      this.terrainReliefTiles.textures,
       this.terrainImageryTexture,
     );
     await this.terrain.initialize();
@@ -269,6 +273,7 @@ export class SceneApp {
     this.atmosphere?.dispose();
     this.terrain?.dispose();
     this.terrainSurfaceBuilder?.dispose();
+    this.terrainReliefTiles?.dispose();
     this.ocean?.dispose();
     this.boundaries?.dispose();
     this.labels?.dispose();
@@ -302,7 +307,14 @@ export class SceneApp {
     // completed previous frame before submitting the next one.
     this.updateMetrics(deltaSeconds, elapsedSeconds);
     const cameraChanged = this.cameraController.update();
-    this.terrain.update(this.cameraController.getDistance(), deltaSeconds);
+    const cameraDistance = this.cameraController.getDistance();
+    this.terrainReliefTiles?.update(
+      this.camera,
+      this.cameraController.controls.target,
+      cameraDistance,
+      deltaSeconds,
+    );
+    this.terrain.update(cameraDistance, deltaSeconds);
     this.ocean.update(elapsedSeconds);
     this.routeLayer.update(
       deltaSeconds,
@@ -339,6 +351,7 @@ export class SceneApp {
     this.params.metrics.fps = Math.round(this.metricFrameCount / Math.max(this.metricElapsed, 0.001));
     this.params.metrics.currentLod = `${this.adminLod.currentLod}/${this.terrain.getGeometryLod()}`;
     this.params.metrics.cameraDistance = Number(this.cameraController.getDistance().toFixed(2));
+    this.params.metrics.reliefTiles = this.terrainReliefTiles?.getResidentCount() ?? 0;
     this.metricFrameCount = 0;
     this.metricElapsed = 0;
     if (!this.metricSnapshotQueued) {
@@ -488,6 +501,7 @@ export class SceneApp {
       detailRange.step,
     ).name('近景结构距离').onChange(() => this.applyTerrainParams());
     terrainLod.add(this.params.metrics, 'cameraDistance').name('实时相机距离').listen();
+    terrainLod.add(this.params.metrics, 'reliefTiles').name('高清地形页').listen();
     terrain.add(this.params.terrain, 'rockThreshold', 0.15, 0.8, 0.01).name('岩石海拔').onChange(() => this.applyTerrainParams());
     terrain.add(this.params.terrain, 'snowThreshold', 0.45, 1, 0.01).name('积雪海拔').onChange(() => this.applyTerrainParams());
     terrain.add(this.params.terrain, 'hazeStrength', 0, 1, 0.01).name('远景雾化').onChange(() => this.applyTerrainParams());

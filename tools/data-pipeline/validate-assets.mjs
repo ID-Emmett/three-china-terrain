@@ -18,6 +18,8 @@ const ASSET_FILES = [
 const REQUIRED_FILES = ['scene-manifest.json', 'ATTRIBUTION.md', ...ASSET_FILES];
 const MAX_RUNTIME_BYTES = 2 * 1024 * 1024;
 const MAX_TERRAIN_TEXTURE_BYTES = 1024 * 1024;
+const MAX_STREAMED_RELIEF_BYTES = 256 * 1024 * 1024;
+const RELIEF_TILE_DIRECTORY = 'terrain-relief-tiles';
 const EXPECTED_LAND_SOURCE = 'China administrative coastline with Natural Earth surrounding context';
 
 function sameEntries(actual, expected) {
@@ -161,8 +163,8 @@ async function validateCoastMask(relativePath, width, height) {
 async function main() {
   const sizes = {};
   const outputEntries = await fs.readdir(OUTPUT_ROOT, { withFileTypes: true });
-  const directories = outputEntries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-  if (directories.length > 0) {
+  const directories = outputEntries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+  if (!sameEntries(directories, [RELIEF_TILE_DIRECTORY])) {
     throw new Error(`Unexpected runtime asset directories: ${directories.join(', ')}`);
   }
 
@@ -179,7 +181,7 @@ async function main() {
   }
 
   const manifest = await readJson(path.join(OUTPUT_ROOT, 'scene-manifest.json'));
-  if (manifest.version !== 14) throw new Error(`Unexpected manifest version: ${manifest.version}`);
+  if (manifest.version !== 15) throw new Error(`Unexpected manifest version: ${manifest.version}`);
   if (manifest.sources?.landMask !== EXPECTED_LAND_SOURCE
     || JSON.stringify(manifest).includes('replacement')) {
     throw new Error('Manifest does not describe the authoritative single land topology.');
@@ -224,6 +226,42 @@ async function main() {
     || sizes['terrain-relief.webp'] < 100_000
     || sizes['terrain-relief.webp'] > MAX_TERRAIN_TEXTURE_BYTES) {
     throw new Error('Invalid terrain relief texture asset.');
+  }
+  const reliefTiles = manifest.terrain.reliefTiles;
+  if (!reliefTiles
+    || reliefTiles.urlTemplate !== '/data/terrain-relief-tiles/{x}-{y}.webp'
+    || reliefTiles.width !== reliefTiles.columns * reliefTiles.tileSize
+    || reliefTiles.height !== reliefTiles.rows * reliefTiles.tileSize
+    || reliefTiles.gutter < 1
+    || reliefTiles.maxResidentTiles < 16
+    || reliefTiles.maxResidentTiles > 64
+    || reliefTiles.format !== 'rg-normal-b-light-a-residual') {
+    throw new Error('Invalid progressive terrain relief tile metadata.');
+  }
+  const reliefTileEntries = (await fs.readdir(
+    path.join(OUTPUT_ROOT, RELIEF_TILE_DIRECTORY),
+    { withFileTypes: true },
+  )).filter((entry) => entry.isFile()).map((entry) => entry.name).sort();
+  const expectedReliefTiles = [];
+  let streamedReliefBytes = 0;
+  const expectedReliefTileSize = reliefTiles.tileSize + reliefTiles.gutter * 2;
+  for (let y = 0; y < reliefTiles.rows; y += 1) {
+    for (let x = 0; x < reliefTiles.columns; x += 1) {
+      const fileName = `${x}-${y}.webp`;
+      expectedReliefTiles.push(fileName);
+      const filePath = path.join(OUTPUT_ROOT, RELIEF_TILE_DIRECTORY, fileName);
+      streamedReliefBytes += (await fs.stat(filePath)).size;
+      const metadata = await sharp(filePath).metadata();
+      if (metadata.width !== expectedReliefTileSize || metadata.height !== expectedReliefTileSize) {
+        throw new Error(`Invalid relief tile dimensions: ${fileName}`);
+      }
+    }
+  }
+  expectedReliefTiles.sort();
+  if (!sameEntries(reliefTileEntries, expectedReliefTiles)
+    || reliefTiles.byteLength !== streamedReliefBytes
+    || streamedReliefBytes > MAX_STREAMED_RELIEF_BYTES) {
+    throw new Error('Progressive terrain relief tile set is incomplete or exceeds its budget.');
   }
   if (manifest.terrainImagery?.url !== '/data/terrain-imagery.jpg'
     || sizes['terrain-imagery.jpg'] < 100_000
@@ -318,7 +356,10 @@ async function main() {
     throw new Error(`Runtime assets exceed 2 MB: ${(totalBytes / 1024 / 1024).toFixed(2)} MB`);
   }
 
-  console.log(`Validated ${REQUIRED_FILES.length} files (${(totalBytes / 1024 / 1024).toFixed(2)} MB runtime assets).`);
+  console.log(
+    `Validated ${REQUIRED_FILES.length} initial files (${(totalBytes / 1024 / 1024).toFixed(2)} MB)`
+    + ` and ${(streamedReliefBytes / 1024 / 1024).toFixed(2)} MB of streamed relief tiles.`,
+  );
   console.table(manifest.adminSummary);
 }
 

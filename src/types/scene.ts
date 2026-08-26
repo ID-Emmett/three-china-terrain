@@ -26,6 +26,18 @@ export interface SceneManifest {
     reliefWidth: number;
     reliefHeight: number;
     reliefResidualRangeMeters: number;
+    reliefTiles: {
+      urlTemplate: string;
+      width: number;
+      height: number;
+      tileSize: number;
+      gutter: number;
+      columns: number;
+      rows: number;
+      maxResidentTiles: number;
+      byteLength: number;
+      format: 'rg-normal-b-light-a-residual';
+    };
   };
   terrainImagery: {
     url: string;

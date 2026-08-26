@@ -4,6 +4,7 @@ import type { TerrainData, TerrainValidationReport } from './TerrainData';
 import { createTerrainDetailTexture } from './TerrainDetailTexture';
 import { TerrainGeometryBuilder } from './TerrainGeometryBuilder';
 import { TerrainMaterial } from './TerrainMaterial';
+import type { TerrainReliefTileTextures } from './TerrainReliefTileCache';
 import {
   applyTerrainSurfaceBundle,
   createTerrainSurfaceTexture,
@@ -63,6 +64,7 @@ export class TerrainLayer implements SceneLayer {
     coastMask: THREE.Texture,
     chinaMask: THREE.Texture,
     reliefTexture: THREE.Texture,
+    reliefTiles: TerrainReliefTileTextures,
     terrainImagery: THREE.Texture,
   ) {
     this.object3d.name = 'TerrainLayer';
@@ -74,6 +76,7 @@ export class TerrainLayer implements SceneLayer {
       surfaceTexture,
       detailTexture,
       reliefTexture,
+      reliefTiles,
       terrainImagery,
       data.meta.minimumElevationMeters,
       data.meta.maximumElevationMeters,

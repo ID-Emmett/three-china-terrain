@@ -114,6 +114,7 @@ export interface DebugParams {
     backend: string;
     currentLod: string;
     cameraDistance: number;
+    reliefTiles: number;
   };
 }
 
@@ -236,6 +237,7 @@ export function createDebugParams(): DebugParams {
       backend: 'initializing',
       currentLod: 'country',
       cameraDistance: 0,
+      reliefTiles: 0,
     },
   };
 }

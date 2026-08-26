@@ -4,6 +4,8 @@ import {
   cameraPosition,
   dot,
   float,
+  fract,
+  int,
   length,
   min,
   mix,
@@ -19,6 +21,7 @@ import {
   vec3,
 } from 'three/tsl';
 import { TERRAIN_LOD_DEFAULTS } from './TerrainLodConfig';
+import type { TerrainReliefTileTextures } from './TerrainReliefTileCache';
 
 type UniformEntry<T> = { value: T };
 
@@ -42,6 +45,7 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
     surfaceTexture: THREE.DataTexture,
     detailTexture: THREE.DataTexture,
     reliefTexture: THREE.Texture,
+    reliefTiles: TerrainReliefTileTextures,
     terrainImagery: THREE.Texture,
     minimumElevationMeters: number,
     maximumElevationMeters: number,
@@ -61,6 +65,19 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
     const materialMip = smoothstep(68, 260, distance).mul(3);
     const surfaceField = texture(surfaceTexture, mapUv).level(materialMip);
     const reliefField = texture(reliefTexture, mapUv).level(materialMip.mul(0.72));
+    const page = texture(reliefTiles.pages, mapUv).level(float(0));
+    const pageTexel = vec2(1 / reliefTiles.columns, 1 / reliefTiles.rows);
+    const pageLeft = texture(reliefTiles.pages, mapUv.sub(vec2(pageTexel.x, 0))).level(float(0));
+    const pageRight = texture(reliefTiles.pages, mapUv.add(vec2(pageTexel.x, 0))).level(float(0));
+    const pageDown = texture(reliefTiles.pages, mapUv.sub(vec2(0, pageTexel.y))).level(float(0));
+    const pageUp = texture(reliefTiles.pages, mapUv.add(vec2(0, pageTexel.y))).level(float(0));
+    const assetSize = reliefTiles.tileSize + reliefTiles.gutter * 2;
+    const tileCoordinates = mapUv.mul(vec2(reliefTiles.columns, reliefTiles.rows));
+    const tileUv = fract(tileCoordinates)
+      .mul(reliefTiles.tileSize / assetSize)
+      .add(reliefTiles.gutter / assetSize);
+    const tileLayer = int(page.r.mul(255).add(0.5));
+    const reliefTile = texture(reliefTiles.tiles, tileUv).depth(tileLayer);
     const detailUv = vec2(
       mapUv.x.mul(17.3).add(mapUv.y.mul(5.1)),
       mapUv.y.mul(19.1).sub(mapUv.x.mul(4.3)),
@@ -71,7 +88,6 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
     const chinaValue = texture(chinaMask, mapUv).r;
     const elevation = surfaceField.r;
     const localShapeFactor = surfaceField.g.mul(0.14).add(0.9);
-    const heightResidual = reliefField.r.mul(2).sub(1);
     const broadLight = reliefField.g.mul(2).sub(1);
     const mediumLight = reliefField.b.mul(2).sub(1);
     const fineLight = reliefField.a.mul(2).sub(1);
@@ -104,6 +120,34 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
     const detailLod = float(1).sub(
       smoothstep(detailDistance.mul(0.34), detailDistance, distance),
     );
+    const tileEdgeWidth = float(0.06);
+    const leftEdge = mix(
+      smoothstep(0, tileEdgeWidth, fract(tileCoordinates.x)),
+      float(1),
+      pageLeft.g,
+    );
+    const rightEdge = mix(
+      smoothstep(0, tileEdgeWidth, float(1).sub(fract(tileCoordinates.x))),
+      float(1),
+      pageRight.g,
+    );
+    const downEdge = mix(
+      smoothstep(0, tileEdgeWidth, fract(tileCoordinates.y)),
+      float(1),
+      pageDown.g,
+    );
+    const upEdge = mix(
+      smoothstep(0, tileEdgeWidth, float(1).sub(fract(tileCoordinates.y))),
+      float(1),
+      pageUp.g,
+    );
+    const tileFade = page.g.mul(leftEdge).mul(rightEdge).mul(downEdge).mul(upEdge);
+    const residentDetail = tileFade.mul(detailLod);
+    const heightResidual = mix(
+      reliefField.r.mul(2).sub(1),
+      reliefTile.a.mul(2).sub(1),
+      residentDetail,
+    );
 
     const detailedNormalXZ = surfaceField.ba.mul(2).sub(1);
     const detailedNormalY = sqrt(float(1).sub(dot(detailedNormalXZ, detailedNormalXZ)).max(0));
@@ -112,9 +156,13 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
       detailedNormalY,
       detailedNormalXZ.y,
     ).normalize();
+    const tileNormalXZ = reliefTile.rg.mul(2).sub(1);
+    const tileNormalY = sqrt(float(1).sub(dot(tileNormalXZ, tileNormalXZ)).max(0));
+    const tileNormalLocal = vec3(tileNormalXZ.x, tileNormalY, tileNormalXZ.y).normalize();
+    const residentNormalLocal = mix(detailedNormalLocal, tileNormalLocal, residentDetail).normalize();
     const terrainNormalLocal = mix(
       vec3(0, 1, 0),
-      detailedNormalLocal,
+      residentNormalLocal,
       float(0.88).add(detailLod.mul(0.12)),
     ).normalize();
     const terrainNormalView = transformNormalToView(terrainNormalLocal);
@@ -170,6 +218,7 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
     // triple-lit by broad, medium and fine channels.
     let reliefLight = mix(broadLight, mediumLight, materialLod.mul(0.82));
     reliefLight = mix(reliefLight, fineLight, detailLod.mul(0.72));
+    reliefLight = mix(reliefLight, reliefTile.b.mul(2).sub(1), residentDetail.mul(0.92));
     // Relief channels reveal terrain below the geometry resolution. A biased
     // response preserves fill light on the shaded face while keeping the
     // sun-facing ridge edge crisp, matching aerial terrain photography.

@@ -41,7 +41,7 @@ export class AssetManifestLoader {
       throw new Error(`Failed to load ${manifestUrl}: ${manifestResponse.status} ${manifestResponse.statusText}`);
     }
     const manifest = await manifestResponse.json() as SceneManifest;
-    if (manifest.version !== 14 || manifest.topology?.boundaryFormat !== 'LGB4-uv-province') {
+    if (manifest.version !== 15 || manifest.topology?.boundaryFormat !== 'LGB4-uv-province') {
       throw new Error('Scene asset manifest is stale or incompatible with the current renderer.');
     }
     const assetUrl = (url: string): string => versionedAssetUrl(

@@ -1,6 +1,6 @@
 {
-  "version": 14,
-  "generatedAt": "2026-08-26T03:16:57.034Z",
+  "version": 15,
+  "generatedAt": "2026-08-26T08:26:25.735Z",
   "region": {
     "west": 70,
     "east": 145,
@@ -21,6 +21,18 @@
     "reliefWidth": 1024,
     "reliefHeight": 768,
     "reliefResidualRangeMeters": 720,
+    "reliefTiles": {
+      "urlTemplate": "/data/terrain-relief-tiles/{x}-{y}.webp",
+      "width": 8192,
+      "height": 6144,
+      "tileSize": 512,
+      "gutter": 2,
+      "columns": 16,
+      "rows": 12,
+      "maxResidentTiles": 36,
+      "byteLength": 57771114,
+      "format": "rg-normal-b-light-a-residual"
+    },
     "width": 512,
     "height": 384,
     "minimumElevationMeters": 0,
