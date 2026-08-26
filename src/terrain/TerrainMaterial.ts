@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import {
+  attribute,
   cameraPosition,
   dot,
   float,
@@ -7,7 +8,9 @@ import {
   min,
   mix,
   positionWorld,
+  positionLocal,
   smoothstep,
+  sqrt,
   texture,
   transformNormalToView,
   uniform,
@@ -31,22 +34,19 @@ type TerrainColorName =
 export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
   public readonly uniforms: Record<string, UniformEntry<unknown>>;
   private readonly surfaceTexture: THREE.DataTexture;
-  private readonly reliefTexture: THREE.Texture;
+  private readonly normalTexture: THREE.DataTexture;
   private readonly detailTexture: THREE.DataTexture;
 
   public constructor(
     coastMask: THREE.Texture,
     chinaMask: THREE.Texture,
     surfaceTexture: THREE.DataTexture,
+    normalTexture: THREE.DataTexture,
     detailTexture: THREE.DataTexture,
     reliefTexture: THREE.Texture,
     terrainImagery: THREE.Texture,
-    reliefResidualRangeMeters: number,
     minimumElevationMeters: number,
     maximumElevationMeters: number,
-    sceneWidth: number,
-    sceneDepth: number,
-    sceneUnitsPerMeter: number,
   ) {
     super({
       dithering: true,
@@ -56,12 +56,15 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
       metalness: 0,
     });
     this.surfaceTexture = surfaceTexture;
-    this.reliefTexture = reliefTexture;
+    this.normalTexture = normalTexture;
     this.detailTexture = detailTexture;
 
     const mapUv = uv();
-    const surfaceField = texture(surfaceTexture, mapUv);
-    const reliefField = texture(reliefTexture, mapUv);
+    const distance = length(cameraPosition.sub(positionWorld));
+    const materialMip = smoothstep(68, 260, distance).mul(3);
+    const surfaceField = texture(surfaceTexture, mapUv).level(materialMip);
+    const normalField = texture(normalTexture, mapUv).level(materialMip);
+    const reliefField = texture(reliefTexture, mapUv).level(materialMip.mul(0.72));
     const detailUv = vec2(
       mapUv.x.mul(17.3).add(mapUv.y.mul(5.1)),
       mapUv.y.mul(19.1).sub(mapUv.x.mul(4.3)),
@@ -98,8 +101,8 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
     const snowThreshold = uniform(0.94);
     const hazeStrength = uniform(0.08);
     const edgeFade = uniform(0.14);
+    const geometryMorph = uniform(1);
 
-    const distance = length(cameraPosition.sub(positionWorld));
     const materialLod = float(1).sub(
       smoothstep(materialDistance.mul(0.52), materialDistance, distance),
     );
@@ -107,57 +110,16 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
       smoothstep(detailDistance.mul(0.34), detailDistance, distance),
     );
 
-    // The mesh object's Y scale already applies the user-controlled vertical
-    // exaggeration to both positions and normals. Repeating that scale here
-    // made an exaggeration of 10 behave like 100 and crushed near slopes into
-    // black grooves.
-    const surfaceImage = surfaceTexture.image;
-    const surfaceTexel = vec2(
-      1 / (surfaceImage.width - 1),
-      1 / (surfaceImage.height - 1),
-    );
-    const heightRangeLocal = float(maximumElevationMeters - minimumElevationMeters)
-      .mul(sceneUnitsPerMeter);
-    const surfaceLeft = texture(surfaceTexture, mapUv.add(vec2(surfaceTexel.x.negate(), 0)));
-    const surfaceRight = texture(surfaceTexture, mapUv.add(vec2(surfaceTexel.x, 0)));
-    const surfaceUp = texture(surfaceTexture, mapUv.add(vec2(0, surfaceTexel.y.negate())));
-    const surfaceDown = texture(surfaceTexture, mapUv.add(vec2(0, surfaceTexel.y)));
-    const heightLeft = surfaceLeft.r.mul(256).add(surfaceLeft.g).div(257);
-    const heightRight = surfaceRight.r.mul(256).add(surfaceRight.g).div(257);
-    const heightUp = surfaceUp.r.mul(256).add(surfaceUp.g).div(257);
-    const heightDown = surfaceDown.r.mul(256).add(surfaceDown.g).div(257);
-    const baseSlopeX = heightRight.sub(heightLeft)
-      .mul(heightRangeLocal)
-      .div(float(2 * sceneWidth / (surfaceImage.width - 1)));
-    const baseSlopeZ = heightDown.sub(heightUp)
-      .mul(heightRangeLocal)
-      .div(float(2 * sceneDepth / (surfaceImage.height - 1)));
-    const baseNormalLocal = vec3(baseSlopeX.negate(), 1, baseSlopeZ.negate()).normalize();
+    const baseNormalXZ = normalField.rg.mul(2).sub(1);
+    const baseNormalY = sqrt(float(1).sub(dot(baseNormalXZ, baseNormalXZ)).max(0));
+    const baseNormalLocal = vec3(baseNormalXZ.x, baseNormalY, baseNormalXZ.y).normalize();
     const overviewNormalLocal = mix(baseNormalLocal, vec3(0, 1, 0), 0.12).normalize();
-
-    // R stores signed zoom-8 elevation residual. Its gradient adds tributary
-    // ridges without changing the broad mesh silhouette.
-    const reliefImage = reliefTexture.image as { width: number; height: number };
-    const reliefTexel = vec2(
-      1 / (reliefImage.width - 1),
-      1 / (reliefImage.height - 1),
-    );
-    const residualLeft = texture(reliefTexture, mapUv.add(vec2(reliefTexel.x.negate(), 0))).r;
-    const residualRight = texture(reliefTexture, mapUv.add(vec2(reliefTexel.x, 0))).r;
-    const residualUp = texture(reliefTexture, mapUv.add(vec2(0, reliefTexel.y.negate()))).r;
-    const residualDown = texture(reliefTexture, mapUv.add(vec2(0, reliefTexel.y))).r;
-    const residualRangeLocal = float(reliefResidualRangeMeters)
-      .mul(sceneUnitsPerMeter);
-    const residualSlopeX = residualRight.sub(residualLeft)
-      .mul(residualRangeLocal)
-      .div(float(sceneWidth / (reliefImage.width - 1)));
-    const residualSlopeZ = residualDown.sub(residualUp)
-      .mul(residualRangeLocal)
-      .div(float(sceneDepth / (reliefImage.height - 1)));
+    const detailedNormalXZ = normalField.ba.mul(2).sub(1);
+    const detailedNormalY = sqrt(float(1).sub(dot(detailedNormalXZ, detailedNormalXZ)).max(0));
     const detailedNormalLocal = vec3(
-      baseSlopeX.add(residualSlopeX.mul(0.92)).negate(),
-      1,
-      baseSlopeZ.add(residualSlopeZ.mul(0.92)).negate(),
+      detailedNormalXZ.x,
+      detailedNormalY,
+      detailedNormalXZ.y,
     ).normalize();
     const terrainNormalLocal = mix(
       overviewNormalLocal,
@@ -295,6 +257,7 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
     const edgeVisibility = mix(edgeMask, float(1), chinaFocus);
     terrainColor = mix(terrainColor, atmosphericColor, float(1).sub(edgeVisibility).mul(0.82));
 
+    this.positionNode = mix(attribute('aMorphPosition', 'vec3'), positionLocal, geometryMorph);
     this.normalNode = terrainNormalView;
     this.colorNode = terrainColor;
     this.roughnessNode = roughness.mul(float(0.94).sub(snowMask.mul(0.15))).clamp(0.5, 1);
@@ -317,6 +280,7 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
       uSnowThreshold: { value: snowThreshold.value },
       uHazeStrength: { value: hazeStrength.value },
       uEdgeFade: { value: edgeFade.value },
+      uGeometryMorph: { value: geometryMorph.value },
       uLowlandColor: { value: lowland.value },
       uDrylandColor: { value: dryland.value },
       uForestColor: { value: forest.value },
@@ -339,6 +303,7 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
       snowThreshold,
       hazeStrength,
       edgeFade,
+      geometryMorph,
       lowland,
       dryland,
       forest,
@@ -379,14 +344,19 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
       uSnowThreshold: 'snowThreshold',
       uHazeStrength: 'hazeStrength',
       uEdgeFade: 'edgeFade',
+      uGeometryMorph: 'geometryMorph',
     };
     const node = (this.userData.nodes as Record<string, { value: unknown }>)[nodeNames[name]];
     if (node) node.value = value;
   }
 
+  public setMorph(value: number): void {
+    this.setNumeric('uGeometryMorph', THREE.MathUtils.clamp(value, 0, 1));
+  }
+
   public override dispose(): void {
     this.surfaceTexture.dispose();
-    this.reliefTexture.dispose();
+    this.normalTexture.dispose();
     this.detailTexture.dispose();
     super.dispose();
   }

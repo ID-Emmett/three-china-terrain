@@ -22,6 +22,10 @@ export interface SceneManifest {
   terrain: TerrainMeta & {
     metaUrl: string;
     heightUrl: string;
+    surfaceUrl: string;
+    surfaceWidth: number;
+    surfaceHeight: number;
+    surfaceMipLevels: number;
     reliefTextureUrl: string;
     reliefWidth: number;
     reliefHeight: number;
@@ -77,6 +81,7 @@ export interface AdminLabelDatum {
 export interface SceneAssets {
   manifest: SceneManifest;
   heights: Int16Array;
+  terrainSurface: ArrayBuffer;
   terrainRelief: ImageBitmap;
   terrainImagery: ImageBitmap;
   oceanMask: Uint8Array;

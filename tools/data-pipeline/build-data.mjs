@@ -15,6 +15,7 @@ import {
   uvToLonLat,
 } from './config.mjs';
 import { ensureDirectory, exists, readJson, writeJson } from './io.mjs';
+import { buildSurfaceFieldBundle, writeSurfaceFieldBundle } from './surface-field.mjs';
 
 const { PNG } = pngjs;
 const NASA_IMAGERY_FILE = path.join(CACHE_ROOT, 'nasa-blue-marble-2004-08-21600.jpg');
@@ -111,6 +112,7 @@ async function buildReliefTexture(sourceHeights, width, height) {
   await sharp(output, { raw: { width, height, channels: 4 } })
     .webp({ quality: 90, alphaQuality: 90, smartSubsample: true, effort: 6 })
     .toFile(path.join(OUTPUT_ROOT, 'terrain-relief.webp'));
+  return output;
 }
 
 async function buildTerrainImagery() {
@@ -899,6 +901,51 @@ async function writeGzip(fileName, data) {
   return compressedFileName;
 }
 
+async function validateBuildInputs() {
+  const downloadManifestPath = path.join(CACHE_ROOT, 'download-manifest.json');
+  const requiredFiles = [
+    downloadManifestPath,
+    path.join(CACHE_ROOT, 'natural-earth', 'ne_50m_land.geojson'),
+    NASA_IMAGERY_FILE,
+    path.join(CACHE_ROOT, 'admin', '100000_full.json'),
+  ];
+  const missing = [];
+  for (const filePath of requiredFiles) {
+    if (!(await exists(filePath))) missing.push(path.relative(PROJECT_ROOT, filePath));
+  }
+  if (missing.length > 0) {
+    throw new Error(`Data build inputs are incomplete. Run npm run data:download. Missing: ${missing.join(', ')}`);
+  }
+
+  const downloadManifest = await readJson(downloadManifestPath);
+  for (const key of ['terrain', 'terrainDetail']) {
+    const source = downloadManifest[key];
+    if (!source) {
+      missing.push(`data/cache/download-manifest.json:${key}`);
+      continue;
+    }
+    for (let y = source.minY; y <= source.maxY; y += 1) {
+      for (let x = source.minX; x <= source.maxX; x += 1) {
+        const tile = path.join(CACHE_ROOT, 'terrain', String(source.zoom), String(x), `${y}.png`);
+        if (!(await exists(tile))) missing.push(path.relative(PROJECT_ROOT, tile));
+      }
+    }
+  }
+  const national = await readJson(path.join(CACHE_ROOT, 'admin', '100000_full.json'));
+  for (const feature of national.features ?? []) {
+    const adcode = Number(feature.properties?.adcode);
+    if (feature.properties?.level !== 'province' || !Number.isInteger(adcode)) continue;
+    if (Number(feature.properties?.childrenNum) <= 0) continue;
+    const province = path.join(CACHE_ROOT, 'admin', `${adcode}_full.json`);
+    if (!(await exists(province))) missing.push(path.relative(PROJECT_ROOT, province));
+  }
+  if (missing.length > 0) {
+    const preview = missing.slice(0, 12).join(', ');
+    const suffix = missing.length > 12 ? `, and ${missing.length - 12} more` : '';
+    throw new Error(`Data build inputs are incomplete. Run npm run data:download. Missing: ${preview}${suffix}`);
+  }
+}
+
 async function buildAdministrativeAssets() {
   console.log('Building administrative boundaries and labels...');
   const features = await collectAdministrativeFeatures();
@@ -940,10 +987,13 @@ async function buildAdministrativeAssets() {
 }
 
 async function fileSize(fileName) {
-  return (await fs.stat(path.join(OUTPUT_ROOT, fileName))).size;
+  const data = await fs.readFile(path.join(OUTPUT_ROOT, fileName));
+  if (!fileName.endsWith('.json') && !fileName.endsWith('.md')) return data.byteLength;
+  return Buffer.byteLength(data.toString('utf8').replace(/\r\n/g, '\n'));
 }
 
 async function main() {
+  await validateBuildInputs();
   await fs.rm(OUTPUT_ROOT, { recursive: true, force: true });
   await ensureDirectory(OUTPUT_ROOT);
   await fs.copyFile(ATTRIBUTION_FILE, path.join(OUTPUT_ROOT, 'ATTRIBUTION.md'));
@@ -968,7 +1018,7 @@ async function main() {
     Buffer.from(heights.buffer, heights.byteOffset, heights.byteLength),
   );
   console.log('Baking multiscale terrain relief texture...');
-  await buildReliefTexture(reliefHeights, reliefWidth, reliefHeight);
+  const reliefPixels = await buildReliefTexture(reliefHeights, reliefWidth, reliefHeight);
   console.log('Reprojecting NASA Blue Marble terrain imagery...');
   const terrainImagery = await buildTerrainImagery();
 
@@ -990,9 +1040,19 @@ async function main() {
     },
   };
   await writeJson(path.join(OUTPUT_ROOT, 'terrain-meta.json'), terrainMeta);
+  const surfaceBundle = buildSurfaceFieldBundle(
+    { ...terrainMeta, reliefResidualRangeMeters: RELIEF_RESIDUAL_RANGE_METERS },
+    heights,
+    reliefPixels,
+    reliefWidth,
+    reliefHeight,
+  );
+  const terrainSurfaceFile = 'terrain-surface.bin.gz';
+  await writeSurfaceFieldBundle(path.join(OUTPUT_ROOT, terrainSurfaceFile), surfaceBundle);
 
   const files = [
     terrainHeightFile,
+    terrainSurfaceFile,
     'terrain-relief.webp',
     'terrain-imagery.jpg',
     'terrain-meta.json',
@@ -1003,12 +1063,16 @@ async function main() {
   const sizes = Object.fromEntries(await Promise.all(files.map(async (file) => [file, await fileSize(file)])));
 
   await writeJson(path.join(OUTPUT_ROOT, 'scene-manifest.json'), {
-    version: 12,
+    version: 13,
     generatedAt: new Date().toISOString(),
     region: REGION,
     terrain: {
       metaUrl: '/data/terrain-meta.json',
       heightUrl: `/data/${terrainHeightFile}`,
+      surfaceUrl: `/data/${terrainSurfaceFile}`,
+      surfaceWidth: surfaceBundle.levels[0].width,
+      surfaceHeight: surfaceBundle.levels[0].height,
+      surfaceMipLevels: surfaceBundle.levels.length,
       reliefTextureUrl: '/data/terrain-relief.webp',
       reliefWidth,
       reliefHeight,

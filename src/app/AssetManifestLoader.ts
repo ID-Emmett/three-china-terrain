@@ -41,7 +41,7 @@ export class AssetManifestLoader {
       throw new Error(`Failed to load ${manifestUrl}: ${manifestResponse.status} ${manifestResponse.statusText}`);
     }
     const manifest = await manifestResponse.json() as SceneManifest;
-    if (manifest.version !== 12 || manifest.topology?.boundaryFormat !== 'LGB4-uv-province') {
+    if (manifest.version !== 13 || manifest.topology?.boundaryFormat !== 'LGB4-uv-province') {
       throw new Error('Scene asset manifest is stale or incompatible with the current renderer.');
     }
     const assetUrl = (url: string): string => versionedAssetUrl(
@@ -52,6 +52,7 @@ export class AssetManifestLoader {
 
     const [
       heightBuffer,
+      terrainSurface,
       terrainRelief,
       terrainImagery,
       oceanMaskBuffer,
@@ -60,6 +61,7 @@ export class AssetManifestLoader {
       provinceLabels,
     ] = await Promise.all([
       fetchBinary(assetUrl(manifest.terrain.heightUrl)),
+      fetchBinary(assetUrl(manifest.terrain.surfaceUrl)),
       fetchChecked(assetUrl(manifest.terrain.reliefTextureUrl))
         .then((response) => response.blob())
         .then((blob) => createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' })),
@@ -85,6 +87,7 @@ export class AssetManifestLoader {
     return {
       manifest,
       heights,
+      terrainSurface,
       terrainRelief,
       terrainImagery,
       oceanMask: new Uint8Array(oceanMaskBuffer),

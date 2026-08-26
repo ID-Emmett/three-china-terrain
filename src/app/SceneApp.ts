@@ -17,6 +17,7 @@ import { TerrainData } from '../terrain/TerrainData';
 import { TerrainLayer } from '../terrain/TerrainLayer';
 import { TERRAIN_LOD_RANGES, TERRAIN_SCENE_WIDTH_UNITS } from '../terrain/TerrainLodConfig';
 import { createMapMaskTexture } from '../terrain/MapMaskTexture';
+import { decodeTerrainSurfaceHeights } from '../terrain/TerrainSurfaceTexture';
 import { WeatherLayer } from '../weather/WeatherLayer';
 import { AssetManifestLoader } from './AssetManifestLoader';
 import { CameraController } from './CameraController';
@@ -156,16 +157,22 @@ export class SceneApp {
       this.assets.oceanMask,
       this.assets.manifest.ocean.maskWidth,
       this.assets.manifest.ocean.maskHeight,
+      decodeTerrainSurfaceHeights(
+        this.assets.terrainSurface,
+        this.assets.manifest.terrain.minimumElevationMeters,
+        this.assets.manifest.terrain.maximumElevationMeters,
+      ),
     );
     this.atmosphere = new AtmosphereLayer();
     this.terrain = new TerrainLayer(
       terrainData,
+      this.assets.terrainSurface,
       this.coastMaskTexture,
       this.chinaMaskTexture,
       this.terrainReliefTexture,
       this.terrainImageryTexture,
-      this.assets.manifest.terrain.reliefResidualRangeMeters,
     );
+    await this.terrain.initialize();
     this.ocean = new OceanLayer(terrainData, this.coastMaskTexture);
     this.boundaries = new BoundaryLayer(
       this.assets.provinceBoundary,
@@ -286,7 +293,7 @@ export class SceneApp {
     // completed previous frame before submitting the next one.
     this.updateMetrics(deltaSeconds, elapsedSeconds);
     const cameraChanged = this.cameraController.update();
-    this.terrain.update(this.cameraController.getDistance());
+    this.terrain.update(this.cameraController.getDistance(), deltaSeconds);
     this.ocean.update(elapsedSeconds);
     this.routeLayer.update(
       deltaSeconds,

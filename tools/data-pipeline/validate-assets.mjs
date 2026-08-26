@@ -9,6 +9,7 @@ const ADMIN_LEVELS = ['province', 'city'];
 const ASSET_FILES = [
   'terrain-meta.json',
   'terrain-height.bin.gz',
+  'terrain-surface.bin.gz',
   'terrain-relief.webp',
   'terrain-imagery.jpg',
   'ocean-mask.bin.gz',
@@ -16,7 +17,7 @@ const ASSET_FILES = [
   ...ADMIN_LEVELS.flatMap((level) => [`${level}-boundary.bin.gz`, `${level}-labels.json`]),
 ];
 const REQUIRED_FILES = ['scene-manifest.json', 'ATTRIBUTION.md', ...ASSET_FILES];
-const MAX_RUNTIME_BYTES = 4 * 1024 * 1024;
+const MAX_RUNTIME_BYTES = 8 * 1024 * 1024;
 const MAX_TERRAIN_TEXTURE_BYTES = 1024 * 1024;
 const EXPECTED_LAND_SOURCE = 'China administrative coastline with Natural Earth surrounding context';
 
@@ -47,6 +48,37 @@ function sampleMask(mask, width, height, u, v) {
 async function readAsset(relativePath) {
   const data = await fs.readFile(path.join(OUTPUT_ROOT, relativePath));
   return relativePath.endsWith('.gz') ? gunzipSync(data) : data;
+}
+
+function normalizedFileSize(relativePath, data) {
+  if (!relativePath.endsWith('.json') && !relativePath.endsWith('.md')) return data.byteLength;
+  return Buffer.byteLength(data.toString('utf8').replace(/\r\n/g, '\n'));
+}
+
+function validateSurfaceField(buffer, manifest) {
+  if (buffer.length < 8 || buffer.subarray(0, 4).toString('ascii') !== 'TSF2') {
+    throw new Error('Invalid terrain surface field header.');
+  }
+  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  const mipLevels = view.getUint32(4, true);
+  if (mipLevels !== manifest.terrain.surfaceMipLevels) {
+    throw new Error('Terrain surface mip count does not match the manifest.');
+  }
+  let offset = 8;
+  for (let level = 0; level < mipLevels; level += 1) {
+    if (offset + 8 > buffer.length) throw new Error('Truncated terrain surface mip header.');
+    const width = view.getUint32(offset, true);
+    const height = view.getUint32(offset + 4, true);
+    offset += 8;
+    const expectedWidth = Math.max(1, Math.floor(manifest.terrain.surfaceWidth / (2 ** level)));
+    const expectedHeight = Math.max(1, Math.floor(manifest.terrain.surfaceHeight / (2 ** level)));
+    if (width !== expectedWidth || height !== expectedHeight) {
+      throw new Error(`Invalid terrain surface mip dimensions at level ${level}.`);
+    }
+    offset += width * height * 8;
+    if (offset > buffer.length) throw new Error(`Truncated terrain surface mip ${level}.`);
+  }
+  if (offset !== buffer.length) throw new Error('Unexpected terrain surface trailing bytes.');
 }
 
 async function validateBoundary(relativePath) {
@@ -169,11 +201,12 @@ async function main() {
     throw new Error(`Runtime asset set mismatch. Missing: ${missing.join(', ') || 'none'}; unexpected: ${unexpected.join(', ') || 'none'}`);
   }
   for (const file of REQUIRED_FILES) {
-    sizes[file] = (await fs.stat(path.join(OUTPUT_ROOT, file))).size;
+    const data = await fs.readFile(path.join(OUTPUT_ROOT, file));
+    sizes[file] = normalizedFileSize(file, data);
   }
 
   const manifest = await readJson(path.join(OUTPUT_ROOT, 'scene-manifest.json'));
-  if (manifest.version !== 12) throw new Error(`Unexpected manifest version: ${manifest.version}`);
+  if (manifest.version !== 13) throw new Error(`Unexpected manifest version: ${manifest.version}`);
   if (manifest.sources?.landMask !== EXPECTED_LAND_SOURCE
     || JSON.stringify(manifest).includes('replacement')) {
     throw new Error('Manifest does not describe the authoritative single land topology.');
@@ -210,6 +243,13 @@ async function main() {
   if (heightBuffer.length !== expectedHeightBytes) {
     throw new Error(`Invalid terrain height size: ${heightBuffer.length} !== ${expectedHeightBytes}`);
   }
+  const surfaceBuffer = await readAsset('terrain-surface.bin.gz');
+  if (manifest.terrain.surfaceUrl !== '/data/terrain-surface.bin.gz'
+    || manifest.terrain.surfaceWidth !== Math.round(manifest.terrain.width * 1.5)
+    || manifest.terrain.surfaceHeight !== Math.round(manifest.terrain.height * 1.5)) {
+    throw new Error('Invalid terrain surface metadata.');
+  }
+  validateSurfaceField(surfaceBuffer, manifest);
   if (manifest.terrain.reliefTextureUrl !== '/data/terrain-relief.webp'
     || sizes['terrain-relief.webp'] < 100_000
     || sizes['terrain-relief.webp'] > MAX_TERRAIN_TEXTURE_BYTES) {

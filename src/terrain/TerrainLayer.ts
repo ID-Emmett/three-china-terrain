@@ -2,7 +2,9 @@ import * as THREE from 'three/webgpu';
 import type { SceneLayer } from '../app/SceneLayer';
 import type { TerrainData, TerrainValidationReport } from './TerrainData';
 import { createTerrainDetailTexture } from './TerrainDetailTexture';
+import { TerrainGeometryBuilder } from './TerrainGeometryBuilder';
 import { TerrainMaterial } from './TerrainMaterial';
+import { createTerrainSurfaceTextures } from './TerrainSurfaceTexture';
 
 type TerrainGeometryLod = 'overview' | 'regional' | 'detail';
 
@@ -10,83 +12,103 @@ interface TerrainLodSpec {
   step: number;
   columns: number;
   rows: number;
+  morphStep?: number;
 }
 
 interface TerrainLodLevel {
   group: THREE.Group;
   meshes: THREE.Mesh[];
-  nextChunk: number;
   ready: boolean;
+  building?: Promise<void>;
 }
 
+interface TerrainTransition {
+  from: TerrainGeometryLod;
+  to: TerrainGeometryLod;
+  direction: 'refine' | 'coarsen';
+  elapsed: number;
+}
+
+const LOD_ORDER: TerrainGeometryLod[] = ['overview', 'regional', 'detail'];
 const LOD_SPECS: Record<TerrainGeometryLod, TerrainLodSpec> = {
   overview: { step: 4, columns: 4, rows: 3 },
-  regional: { step: 2, columns: 6, rows: 4 },
-  detail: { step: 1, columns: 8, rows: 6 },
+  regional: { step: 2, columns: 6, rows: 4, morphStep: 4 },
+  detail: { step: 1, columns: 8, rows: 6, morphStep: 2 },
 };
 
-const REGIONAL_DISTANCE = 88;
-const DETAIL_DISTANCE = 28;
+const REGIONAL_ENTER_DISTANCE = 84;
+const REGIONAL_EXIT_DISTANCE = 94;
+const DETAIL_ENTER_DISTANCE = 26;
+const DETAIL_EXIT_DISTANCE = 34;
+const MORPH_DURATION_SECONDS = 0.36;
+const SKIRT_DEPTH_METERS = 900;
+const CHUNK_ALIGNMENT = 4;
 
 export class TerrainLayer implements SceneLayer {
   public readonly object3d = new THREE.Group();
   public readonly material: TerrainMaterial;
   private readonly levels = new Map<TerrainGeometryLod, TerrainLodLevel>();
-  private readonly buildQueue: TerrainGeometryLod[] = [];
+  private readonly geometryBuilder: TerrainGeometryBuilder;
   private activeLod: TerrainGeometryLod = 'overview';
   private desiredLod: TerrainGeometryLod = 'overview';
-  private idleHandle?: number;
+  private transition?: TerrainTransition;
   private disposed = false;
 
   public constructor(
     private readonly data: TerrainData,
+    terrainSurface: ArrayBuffer,
     coastMask: THREE.Texture,
     chinaMask: THREE.Texture,
     reliefTexture: THREE.Texture,
     terrainImagery: THREE.Texture,
-    reliefResidualRangeMeters: number,
   ) {
     this.object3d.name = 'TerrainLayer';
-    const surfaceTexture = data.createSurfaceTexture();
+    const surfaceTextures = createTerrainSurfaceTextures(terrainSurface);
     const detailTexture = createTerrainDetailTexture(128);
     this.material = new TerrainMaterial(
       coastMask,
       chinaMask,
-      surfaceTexture,
+      surfaceTextures.surface,
+      surfaceTextures.normal,
       detailTexture,
       reliefTexture,
       terrainImagery,
-      reliefResidualRangeMeters,
       data.meta.minimumElevationMeters,
       data.meta.maximumElevationMeters,
-      data.meta.sceneWidth,
-      data.meta.sceneDepth,
-      data.meta.sceneUnitsPerMeter,
     );
+    this.geometryBuilder = new TerrainGeometryBuilder(data.createWorkerSource());
 
-    for (const lod of ['overview', 'regional', 'detail'] as const) {
+    for (const lod of LOD_ORDER) {
       const group = new THREE.Group();
       group.name = `${lod}TerrainChunks`;
-      group.visible = lod === 'overview';
-      this.levels.set(lod, { group, meshes: [], nextChunk: 0, ready: false });
+      group.visible = false;
+      this.levels.set(lod, { group, meshes: [], ready: false });
       this.object3d.add(group);
     }
-
-    this.buildLevelImmediately('overview');
-    this.enqueueBuild('regional');
   }
 
-  public update(cameraDistance: number): void {
-    this.desiredLod = cameraDistance < DETAIL_DISTANCE
-      ? 'detail'
-      : cameraDistance < REGIONAL_DISTANCE ? 'regional' : 'overview';
-    if (this.desiredLod === 'detail') {
-      this.enqueueBuild('regional');
-      this.enqueueBuild('detail');
-    } else if (this.desiredLod === 'regional') {
-      this.enqueueBuild('regional');
+  public async initialize(): Promise<void> {
+    await this.ensureLevel('overview');
+    if (this.disposed) return;
+    this.levels.get('overview')!.group.visible = true;
+    this.material.setMorph(1);
+    void this.ensureLevel('regional').catch(this.reportBuildError);
+  }
+
+  public update(cameraDistance: number, deltaSeconds: number): void {
+    this.updateDesiredLod(cameraDistance);
+    if (this.desiredLod === 'regional') {
+      void this.ensureLevel('regional').catch(this.reportBuildError);
+    } else if (this.desiredLod === 'detail') {
+      void this.ensureLevel('regional')
+        .then(() => this.ensureLevel('detail'))
+        .catch(this.reportBuildError);
     }
-    this.activateBestReadyLevel();
+    if (this.transition) {
+      this.advanceTransition(deltaSeconds);
+      return;
+    }
+    this.startNextTransition();
   }
 
   public setExaggeration(value: number): void {
@@ -120,91 +142,129 @@ export class TerrainLayer implements SceneLayer {
 
   public dispose(): void {
     this.disposed = true;
-    if (this.idleHandle !== undefined) {
-      window.clearTimeout(this.idleHandle);
-    }
+    this.geometryBuilder.dispose();
     for (const level of this.levels.values()) {
       for (const mesh of level.meshes) mesh.geometry.dispose();
     }
     this.levels.clear();
-    this.buildQueue.length = 0;
     this.material.dispose();
   }
 
-  private buildLevelImmediately(lod: TerrainGeometryLod): void {
-    const spec = LOD_SPECS[lod];
+  private async ensureLevel(lod: TerrainGeometryLod): Promise<void> {
     const level = this.levels.get(lod)!;
-    while (level.nextChunk < spec.columns * spec.rows) this.buildNextChunk(lod);
-    level.ready = true;
+    if (level.ready) return;
+    if (level.building) return level.building;
+    level.building = this.buildLevel(lod);
+    try {
+      await level.building;
+      level.ready = true;
+    } finally {
+      level.building = undefined;
+    }
   }
 
-  private buildNextChunk(lod: TerrainGeometryLod): void {
+  private async buildLevel(lod: TerrainGeometryLod): Promise<void> {
     const spec = LOD_SPECS[lod];
+    const columnBounds = alignedChunkBounds(this.data.renderWidth - 1, spec.columns);
+    const rowBounds = alignedChunkBounds(this.data.renderHeight - 1, spec.rows);
     const level = this.levels.get(lod)!;
-    const chunk = level.nextChunk;
-    const chunkX = chunk % spec.columns;
-    const chunkY = Math.floor(chunk / spec.columns);
-    const cellWidth = this.data.renderWidth - 1;
-    const cellHeight = this.data.renderHeight - 1;
-    const columnStart = Math.floor(chunkX * cellWidth / spec.columns);
-    const columnEnd = Math.floor((chunkX + 1) * cellWidth / spec.columns);
-    const rowStart = Math.floor(chunkY * cellHeight / spec.rows);
-    const rowEnd = Math.floor((chunkY + 1) * cellHeight / spec.rows);
-    const geometry = this.data.createGeometry({
-      columnStart,
-      columnEnd,
-      rowStart,
-      rowEnd,
-      step: spec.step,
-    });
-    level.nextChunk += 1;
-    if (geometry.getAttribute('position').count === 0) {
-      geometry.dispose();
+    const builds: Array<Promise<THREE.BufferGeometry>> = [];
+    for (let row = 0; row < spec.rows; row += 1) {
+      for (let column = 0; column < spec.columns; column += 1) {
+        builds.push(this.geometryBuilder.build({
+          columnStart: columnBounds[column],
+          columnEnd: columnBounds[column + 1],
+          rowStart: rowBounds[row],
+          rowEnd: rowBounds[row + 1],
+          step: spec.step,
+          morphStep: spec.morphStep,
+          skirtDepthMeters: SKIRT_DEPTH_METERS,
+        }));
+      }
+    }
+    const geometries = await Promise.all(builds);
+    if (this.disposed) {
+      for (const geometry of geometries) geometry.dispose();
       return;
     }
-
-    const mesh = new THREE.Mesh(geometry, this.material);
-    mesh.name = `${lod}Terrain:${chunkX},${chunkY}`;
-    mesh.frustumCulled = true;
-    mesh.renderOrder = 0;
-    level.meshes.push(mesh);
-    level.group.add(mesh);
-  }
-
-  private enqueueBuild(lod: TerrainGeometryLod): void {
-    const level = this.levels.get(lod)!;
-    if (level.ready || this.buildQueue.includes(lod)) return;
-    this.buildQueue.push(lod);
-    this.scheduleBuild();
-  }
-
-  private scheduleBuild(): void {
-    if (this.disposed || this.idleHandle !== undefined || this.buildQueue.length === 0) return;
-    const run = (): void => {
-      this.idleHandle = undefined;
-      if (this.disposed) return;
-      const lod = this.buildQueue[0];
-      const level = this.levels.get(lod)!;
-      const spec = LOD_SPECS[lod];
-      this.buildNextChunk(lod);
-      if (level.nextChunk >= spec.columns * spec.rows) {
-        level.ready = true;
-        this.buildQueue.shift();
-        this.activateBestReadyLevel();
+    geometries.forEach((geometry, index) => {
+      if (geometry.getAttribute('position').count === 0) {
+        geometry.dispose();
+        return;
       }
-      this.scheduleBuild();
-    };
-    this.idleHandle = window.setTimeout(run, 16);
+      const column = index % spec.columns;
+      const row = Math.floor(index / spec.columns);
+      const mesh = new THREE.Mesh(geometry, this.material);
+      mesh.name = `${lod}Terrain:${column},${row}`;
+      mesh.frustumCulled = true;
+      mesh.renderOrder = 0;
+      level.meshes.push(mesh);
+      level.group.add(mesh);
+    });
   }
 
-  private activateBestReadyLevel(): void {
-    const regionalReady = this.levels.get('regional')!.ready;
-    const detailReady = this.levels.get('detail')!.ready;
-    const nextLod = this.desiredLod === 'detail' && detailReady
-      ? 'detail'
-      : this.desiredLod !== 'overview' && regionalReady ? 'regional' : 'overview';
-    if (nextLod === this.activeLod) return;
-    for (const [lod, level] of this.levels) level.group.visible = lod === nextLod;
-    this.activeLod = nextLod;
+  private updateDesiredLod(cameraDistance: number): void {
+    if (this.desiredLod === 'overview') {
+      if (cameraDistance < REGIONAL_ENTER_DISTANCE) this.desiredLod = 'regional';
+      return;
+    }
+    if (this.desiredLod === 'regional') {
+      if (cameraDistance > REGIONAL_EXIT_DISTANCE) this.desiredLod = 'overview';
+      else if (cameraDistance < DETAIL_ENTER_DISTANCE) this.desiredLod = 'detail';
+      return;
+    }
+    if (cameraDistance > DETAIL_EXIT_DISTANCE) this.desiredLod = 'regional';
   }
+
+  private startNextTransition(): void {
+    const activeIndex = LOD_ORDER.indexOf(this.activeLod);
+    const desiredIndex = LOD_ORDER.indexOf(this.desiredLod);
+    if (activeIndex === desiredIndex) return;
+    const targetIndex = activeIndex + Math.sign(desiredIndex - activeIndex);
+    const target = LOD_ORDER[targetIndex];
+    if (!this.levels.get(target)!.ready) return;
+    const direction = targetIndex > activeIndex ? 'refine' : 'coarsen';
+    this.transition = { from: this.activeLod, to: target, direction, elapsed: 0 };
+    if (direction === 'refine') {
+      this.levels.get(this.activeLod)!.group.visible = false;
+      this.levels.get(target)!.group.visible = true;
+      this.activeLod = target;
+      this.material.setMorph(0);
+    } else {
+      this.material.setMorph(1);
+    }
+  }
+
+  private advanceTransition(deltaSeconds: number): void {
+    const transition = this.transition!;
+    transition.elapsed += Math.min(deltaSeconds, 0.1);
+    const linearProgress = THREE.MathUtils.clamp(transition.elapsed / MORPH_DURATION_SECONDS, 0, 1);
+    const eased = THREE.MathUtils.smoothstep(linearProgress, 0, 1);
+    this.material.setMorph(transition.direction === 'refine' ? eased : 1 - eased);
+    if (linearProgress < 1) return;
+
+    if (transition.direction === 'coarsen') {
+      this.levels.get(transition.from)!.group.visible = false;
+      this.levels.get(transition.to)!.group.visible = true;
+      this.activeLod = transition.to;
+    }
+    this.material.setMorph(1);
+    this.transition = undefined;
+    this.startNextTransition();
+  }
+
+  private readonly reportBuildError = (error: unknown): void => {
+    console.error('Terrain LOD build failed.', error);
+  };
+}
+
+function alignedChunkBounds(cellCount: number, divisions: number): number[] {
+  const output = [0];
+  for (let division = 1; division < divisions; division += 1) {
+    const ideal = division * cellCount / divisions;
+    const aligned = Math.round(ideal / CHUNK_ALIGNMENT) * CHUNK_ALIGNMENT;
+    output.push(THREE.MathUtils.clamp(aligned, output[output.length - 1] + CHUNK_ALIGNMENT, cellCount - 1));
+  }
+  output.push(cellCount);
+  return output;
 }

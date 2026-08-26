@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import type { TerrainMeta } from '../types/scene';
+import type { TerrainWorkerSource } from './TerrainGeometryWorkerProtocol';
 
 const MIN_TRIANGLE_AREA_UV = 1e-12;
 const RENDER_GRID_SCALE = 1.5;
@@ -26,6 +27,7 @@ export class TerrainData {
     coastMask: Uint8Array,
     coastMaskWidth: number,
     coastMaskHeight: number,
+    renderHeights?: Float32Array,
   ) {
     // A 1.5x interpolated grid smooths DEM-sized facets without spending a
     // million triangles on values the source DEM does not contain. Relief and
@@ -36,7 +38,11 @@ export class TerrainData {
     this.coastMaskWidth = coastMaskWidth;
     this.coastMaskHeight = coastMaskHeight;
     this.renderCoast = this.buildRenderCoastGrid();
-    this.renderHeights = this.buildRenderHeightGrid();
+    const expectedRenderHeightCount = this.renderWidth * this.renderHeight;
+    if (renderHeights && renderHeights.length !== expectedRenderHeightCount) {
+      throw new Error(`Precomputed terrain surface size mismatch: ${renderHeights.length} !== ${expectedRenderHeightCount}`);
+    }
+    this.renderHeights = renderHeights ?? this.buildRenderHeightGrid();
   }
 
   public createGeometry(options: TerrainGeometryOptions = {}): THREE.BufferGeometry {
@@ -56,6 +62,7 @@ export class TerrainData {
     columns.push(columnEnd);
     rows.push(rowEnd);
     const positions: number[] = [];
+    const morphPositions: number[] = [];
     const elevations: number[] = [];
     const coastValues: number[] = [];
     const uvs: number[] = [];
@@ -70,6 +77,14 @@ export class TerrainData {
       positions.push(
         (vertex.u - 0.5) * sceneWidth,
         vertex.height * sceneUnitsPerMeter,
+        (vertex.v - 0.5) * sceneDepth,
+      );
+      const morphHeight = options.morphStep && options.morphStep > step
+        ? this.sampleLodHeight(vertex.u, vertex.v, options.morphStep, vertex.coast)
+        : vertex.height;
+      morphPositions.push(
+        (vertex.u - 0.5) * sceneWidth,
+        morphHeight * sceneUnitsPerMeter,
         (vertex.v - 0.5) * sceneDepth,
       );
       if (diagnostics) {
@@ -104,8 +119,25 @@ export class TerrainData {
       }
     }
 
+    if (options.skirtDepthMeters && options.skirtDepthMeters > 0) {
+      this.appendChunkSkirts(
+        positions,
+        morphPositions,
+        uvs,
+        indices,
+        elevations,
+        coastValues,
+        options.skirtDepthMeters,
+        columnStart / (width - 1),
+        columnEnd / (width - 1),
+        rowStart / (height - 1),
+        rowEnd / (height - 1),
+      );
+    }
+
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('aMorphPosition', new THREE.Float32BufferAttribute(morphPositions, 3));
     if (diagnostics) {
       geometry.setAttribute('aElevation', new THREE.Float32BufferAttribute(elevations, 1));
       geometry.setAttribute('aCoast', new THREE.Float32BufferAttribute(coastValues, 1));
@@ -137,71 +169,6 @@ export class TerrainData {
     geometry.computeBoundingBox();
     geometry.computeBoundingSphere();
     return geometry;
-  }
-
-  /**
-   * Upload a filtered, UV-aligned terrain field for fragment shading.
-   *
-   * Keeping these fields in a texture is important: interpolating curvature
-   * and cavity as vertex attributes makes every DEM triangle visible as a
-   * separate color patch in close views.
-   */
-  public createSurfaceTexture(): THREE.DataTexture {
-    const width = this.renderWidth;
-    const height = this.renderHeight;
-    // Elevation uses two normalized bytes (16-bit precision). Curvature and
-    // cavity use the remaining channels, cutting this field to one quarter of
-    // the equivalent RGBA32F upload.
-    const data = new Uint8Array(width * height * 4);
-    const elevationRange = Math.max(1, this.meta.maximumElevationMeters - this.meta.minimumElevationMeters);
-    const sample = (x: number, y: number): number => this.renderHeights[
-      THREE.MathUtils.clamp(y, 0, height - 1) * width
-      + THREE.MathUtils.clamp(x, 0, width - 1)
-    ];
-    for (let sourceY = 0; sourceY < height; sourceY += 1) {
-      const targetY = height - sourceY - 1;
-      for (let x = 0; x < width; x += 1) {
-        const offset = (targetY * width + x) * 4;
-        const center = sample(x, sourceY);
-        const left2 = sample(x - 2, sourceY);
-        const right2 = sample(x + 2, sourceY);
-        const up2 = sample(x, sourceY - 2);
-        const down2 = sample(x, sourceY + 2);
-        const curvatureRaw = (left2 + right2 + up2 + down2 - center * 4) * 0.25;
-        const ringAverage = (left2 + right2 + up2 + down2) * 0.25;
-        const localRelief = Math.max(
-          24,
-          Math.abs(right2 - left2) * 0.5 + Math.abs(down2 - up2) * 0.5,
-        );
-        const elevation = THREE.MathUtils.clamp(
-          (center - this.meta.minimumElevationMeters) / elevationRange,
-          0,
-          1,
-        );
-        const encodedElevation = Math.round(elevation * 65535);
-        data[offset] = encodedElevation >>> 8;
-        data[offset + 1] = encodedElevation & 0xff;
-        data[offset + 2] = Math.round(
-          (THREE.MathUtils.clamp(curvatureRaw / 180, -1, 1) * 0.5 + 0.5) * 255,
-        );
-        data[offset + 3] = Math.round(
-          THREE.MathUtils.clamp(0.5 + (ringAverage - center) / localRelief, 0, 1) * 255,
-        );
-      }
-    }
-    const texture = new THREE.DataTexture(data, width, height, THREE.RGBAFormat, THREE.UnsignedByteType);
-    texture.name = 'TerrainSurfaceField';
-    texture.colorSpace = THREE.NoColorSpace;
-    texture.wrapS = THREE.ClampToEdgeWrapping;
-    texture.wrapT = THREE.ClampToEdgeWrapping;
-    // The field is sampled for height/normal reconstruction, not displayed as
-    // a color texture. Avoid runtime float-mipmap generation, which is both
-    // unnecessary at this resolution and stalls some WebGPU backends.
-    texture.minFilter = THREE.LinearFilter;
-    texture.magFilter = THREE.LinearFilter;
-    texture.generateMipmaps = false;
-    texture.needsUpdate = true;
-    return texture;
   }
 
   public validateGeometry(geometry: THREE.BufferGeometry): TerrainValidationReport {
@@ -309,6 +276,131 @@ export class TerrainData {
     }
     if (ty >= tx) return a * (1 - ty) + c * (ty - tx) + d * tx;
     return a * (1 - tx) + d * ty + b * (tx - ty);
+  }
+
+  public createWorkerSource(): TerrainWorkerSource {
+    return {
+      meta: this.meta,
+      heights: this.heights,
+      renderHeights: this.renderHeights,
+      coastMask: this.coastMask,
+      coastMaskWidth: this.coastMaskWidth,
+      coastMaskHeight: this.coastMaskHeight,
+    };
+  }
+
+  private sampleLodHeight(u: number, v: number, step: number, coast: number): number {
+    if (coast <= 0.500001) return 0;
+    const width = this.renderWidth;
+    const height = this.renderHeight;
+    const x = THREE.MathUtils.clamp(u, 0, 1) * (width - 1);
+    const y = THREE.MathUtils.clamp(v, 0, 1) * (height - 1);
+    const x0 = Math.min(width - 2, Math.floor(x / step) * step);
+    const y0 = Math.min(height - 2, Math.floor(y / step) * step);
+    const x1 = Math.min(width - 1, x0 + step);
+    const y1 = Math.min(height - 1, y0 + step);
+    const tx = (x - x0) / Math.max(1, x1 - x0);
+    const ty = (y - y0) / Math.max(1, y1 - y0);
+    const at = (px: number, py: number): number => {
+      const sampleU = px / (width - 1);
+      const sampleV = py / (height - 1);
+      const sampleCoast = this.sampleCoast(sampleU, sampleV);
+      const coastRamp = THREE.MathUtils.smoothstep(sampleCoast, 0.5, 0.505);
+      return this.renderHeights[py * width + px] * coastRamp;
+    };
+    const a = at(x0, y0);
+    const b = at(x1, y0);
+    const c = at(x0, y1);
+    const d = at(x1, y1);
+    const gridX = Math.floor(x0 / step);
+    const gridY = Math.floor(y0 / step);
+    if ((gridX + gridY) % 2 === 0) {
+      if (tx + ty <= 1) return a * (1 - tx - ty) + b * tx + c * ty;
+      return b * (1 - ty) + c * (1 - tx) + d * (tx + ty - 1);
+    }
+    if (ty >= tx) return a * (1 - ty) + c * (ty - tx) + d * tx;
+    return a * (1 - tx) + d * ty + b * (tx - ty);
+  }
+
+  private appendChunkSkirts(
+    positions: number[],
+    morphPositions: number[],
+    uvs: number[],
+    indices: number[],
+    elevations: number[],
+    coastValues: number[],
+    depthMeters: number,
+    minU: number,
+    maxU: number,
+    minV: number,
+    maxV: number,
+  ): void {
+    const surfaceIndexCount = indices.length;
+    const edgeMap = new Map<string, { a: number; b: number; count: number }>();
+    for (let offset = 0; offset < surfaceIndexCount; offset += 3) {
+      const triangle = [indices[offset], indices[offset + 1], indices[offset + 2]];
+      for (let edge = 0; edge < 3; edge += 1) {
+        const a = triangle[edge];
+        const b = triangle[(edge + 1) % 3];
+        const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+        const existing = edgeMap.get(key);
+        if (existing) existing.count += 1;
+        else edgeMap.set(key, { a, b, count: 1 });
+      }
+    }
+
+    const epsilon = 1e-7;
+    const uvAt = (index: number): { u: number; v: number } => ({
+      u: uvs[index * 2],
+      v: 1 - uvs[index * 2 + 1],
+    });
+    const skirtVertices = new Map<number, number>();
+    const skirtIndex = (source: number): number => {
+      const existing = skirtVertices.get(source);
+      if (existing !== undefined) return existing;
+      const index = positions.length / 3;
+      positions.push(
+        positions[source * 3],
+        positions[source * 3 + 1] - depthMeters * this.meta.sceneUnitsPerMeter,
+        positions[source * 3 + 2],
+      );
+      morphPositions.push(
+        morphPositions[source * 3],
+        morphPositions[source * 3 + 1] - depthMeters * this.meta.sceneUnitsPerMeter,
+        morphPositions[source * 3 + 2],
+      );
+      uvs.push(uvs[source * 2], uvs[source * 2 + 1]);
+      if (elevations.length > 0) elevations.push(elevations[source] - depthMeters);
+      if (coastValues.length > 0) coastValues.push(coastValues[source]);
+      skirtVertices.set(source, index);
+      return index;
+    };
+
+    for (const edge of edgeMap.values()) {
+      if (edge.count !== 1) continue;
+      let a = edge.a;
+      let b = edge.b;
+      const aUv = uvAt(a);
+      const bUv = uvAt(b);
+      let onChunkEdge = false;
+      if (Math.abs(aUv.v - minV) < epsilon && Math.abs(bUv.v - minV) < epsilon) {
+        onChunkEdge = true;
+        if (aUv.u > bUv.u) [a, b] = [b, a];
+      } else if (Math.abs(aUv.v - maxV) < epsilon && Math.abs(bUv.v - maxV) < epsilon) {
+        onChunkEdge = true;
+        if (aUv.u < bUv.u) [a, b] = [b, a];
+      } else if (Math.abs(aUv.u - minU) < epsilon && Math.abs(bUv.u - minU) < epsilon) {
+        onChunkEdge = true;
+        if (aUv.v < bUv.v) [a, b] = [b, a];
+      } else if (Math.abs(aUv.u - maxU) < epsilon && Math.abs(bUv.u - maxU) < epsilon) {
+        onChunkEdge = true;
+        if (aUv.v > bUv.v) [a, b] = [b, a];
+      }
+      if (!onChunkEdge) continue;
+      const skirtA = skirtIndex(a);
+      const skirtB = skirtIndex(b);
+      indices.push(a, b, skirtB, a, skirtB, skirtA);
+    }
   }
 
   /** Split a segment at every edge of the final clipped triangle mesh. */
@@ -660,6 +752,8 @@ export interface TerrainGeometryOptions {
   rowStart?: number;
   rowEnd?: number;
   step?: number;
+  morphStep?: number;
+  skirtDepthMeters?: number;
   diagnostics?: boolean;
 }
 
