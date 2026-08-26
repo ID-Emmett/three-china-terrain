@@ -1,0 +1,15 @@
+{
+  "width": 512,
+  "height": 384,
+  "minimumElevationMeters": 0,
+  "maximumElevationMeters": 6141,
+  "sceneWidth": 120,
+  "sceneDepth": 109.71241509236484,
+  "sceneUnitsPerMeter": 0.000014373044545912345,
+  "bounds": {
+    "west": 70,
+    "east": 145,
+    "south": 3,
+    "north": 58
+  }
+}

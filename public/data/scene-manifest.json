@@ -1,0 +1,107 @@
+{
+  "version": 12,
+  "generatedAt": "2026-08-25T11:43:26.569Z",
+  "region": {
+    "west": 70,
+    "east": 145,
+    "south": 3,
+    "north": 58,
+    "terrainZoom": 6,
+    "terrainDetailZoom": 8,
+    "terrainWidth": 512,
+    "terrainHeight": 384,
+    "maskWidth": 1536,
+    "maskHeight": 1152,
+    "sceneWidth": 120
+  },
+  "terrain": {
+    "metaUrl": "/data/terrain-meta.json",
+    "heightUrl": "/data/terrain-height.bin.gz",
+    "reliefTextureUrl": "/data/terrain-relief.webp",
+    "reliefWidth": 1024,
+    "reliefHeight": 768,
+    "reliefResidualRangeMeters": 720,
+    "width": 512,
+    "height": 384,
+    "minimumElevationMeters": 0,
+    "maximumElevationMeters": 6141,
+    "sceneWidth": 120,
+    "sceneDepth": 109.71241509236484,
+    "sceneUnitsPerMeter": 0.000014373044545912345,
+    "bounds": {
+      "west": 70,
+      "east": 145,
+      "south": 3,
+      "north": 58
+    }
+  },
+  "terrainImagery": {
+    "url": "/data/terrain-imagery.jpg",
+    "width": 2048,
+    "height": 1536,
+    "colorSpace": "srgb"
+  },
+  "ocean": {
+    "maskUrl": "/data/ocean-mask.bin.gz",
+    "maskWidth": 1536,
+    "maskHeight": 1152,
+    "maskChannels": 1
+  },
+  "china": {
+    "maskUrl": "/data/china-mask.bin.gz",
+    "maskWidth": 1536,
+    "maskHeight": 1152,
+    "maskChannels": 1
+  },
+  "boundaries": {
+    "province": "/data/province-boundary.bin.gz",
+    "city": "/data/city-boundary.bin.gz"
+  },
+  "labels": {
+    "province": "/data/province-labels.json",
+    "city": "/data/city-labels.json"
+  },
+  "adminSummary": {
+    "province": {
+      "features": 34,
+      "rings": 329,
+      "lines": 380,
+      "segments": 10346,
+      "points": 10726,
+      "labels": 34
+    },
+    "city": {
+      "features": 363,
+      "rings": 1023,
+      "lines": 881,
+      "segments": 18411,
+      "points": 19292,
+      "labels": 363
+    }
+  },
+  "assetBytes": {
+    "terrain-height.bin.gz": 202314,
+    "terrain-relief.webp": 410692,
+    "terrain-imagery.jpg": 391934,
+    "terrain-meta.json": 291,
+    "ocean-mask.bin.gz": 193002,
+    "china-mask.bin.gz": 185131,
+    "province-boundary.bin.gz": 69326,
+    "province-labels.json": 4089,
+    "city-boundary.bin.gz": 119852,
+    "city-labels.json": 42046
+  },
+  "topology": {
+    "landMask": "/data/ocean-mask.bin.gz",
+    "coastIsoValue": 0.5,
+    "surface": "shared-clipped-triangle-mesh",
+    "boundaryHeight": "runtime-final-terrain-triangle-sampling",
+    "boundaryFormat": "LGB4-uv-province"
+  },
+  "sources": {
+    "elevation": "Mapzen/AWS Terrain Tiles (Terrarium)",
+    "terrainImagery": "NASA Earth Observatory Blue Marble, August 2004",
+    "administrative": "Alibaba Cloud DataV GeoAtlas public dataset",
+    "landMask": "China administrative coastline with Natural Earth surrounding context"
+  }
+}

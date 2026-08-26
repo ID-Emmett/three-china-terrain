@@ -1,0 +1,193 @@
+:root {
+  color-scheme: light;
+  font-family: "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
+  background: #819399;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: #819399;
+}
+
+#app {
+  position: relative;
+  isolation: isolate;
+}
+
+.webgl-canvas,
+.label-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.webgl-canvas {
+  display: block;
+  outline: 0;
+}
+
+.label-layer {
+  overflow: hidden;
+  z-index: 2;
+}
+
+.mode-toolbar {
+  position: absolute;
+  left: 50%;
+  top: 16px;
+  z-index: 5;
+  display: inline-flex;
+  transform: translateX(-50%);
+  padding: 3px;
+  border: 1px solid rgba(30, 74, 80, 0.22);
+  border-radius: 6px;
+  background: rgba(241, 248, 247, 0.82);
+  box-shadow: 0 7px 24px rgba(20, 45, 49, 0.18);
+  backdrop-filter: blur(8px);
+}
+
+.mode-toolbar button {
+  min-width: 76px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 4px;
+  color: rgba(27, 67, 72, 0.7);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 160ms ease, background 160ms ease;
+}
+
+.mode-toolbar button:hover,
+.mode-toolbar button.is-active {
+  color: #123b40;
+  background: rgba(71, 160, 165, 0.25);
+}
+
+@media (max-width: 520px) {
+  .mode-toolbar {
+    left: 12px;
+    transform: none;
+  }
+}
+
+.business-label {
+  --label-opacity: 0.92;
+  --label-bg-opacity: 0.22;
+  padding: 0;
+  border: 0;
+  color: rgba(25, 57, 61, var(--label-opacity));
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: 0;
+  white-space: nowrap;
+  text-shadow:
+    0 1px 3px rgba(255, 255, 255, 0.88),
+    0 0 7px rgba(255, 255, 255, 0.45);
+  transition: opacity 180ms ease, color 180ms ease;
+  user-select: none;
+}
+
+.business-label--station {
+  background: transparent;
+}
+
+.business-label--station.is-priority {
+  color: rgba(19, 57, 62, var(--label-opacity));
+  font-weight: 600;
+}
+
+.business-label--station.is-center {
+  color: rgba(132, 76, 20, var(--label-opacity));
+}
+
+.business-label--metric {
+  padding: 0;
+  color: rgba(22, 99, 104, 0.88);
+  background: transparent;
+  font-size: 11px;
+}
+
+.business-label--metric.is-hovered {
+  color: #a34f13;
+}
+
+.business-label.is-suppressed {
+  opacity: 0 !important;
+  pointer-events: none;
+}
+
+.map-label {
+  padding: 1px 2px;
+  color: rgba(35, 64, 66, 0.78);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  line-height: 1.15;
+  letter-spacing: 0;
+  white-space: nowrap;
+  user-select: none;
+  transform: translateZ(0);
+  will-change: opacity;
+  text-shadow:
+    0 1px 2px rgba(255, 255, 255, 0.82),
+    0 0 4px rgba(255, 255, 255, 0.42);
+}
+
+.map-label--province {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(35, 75, 77, 0.58);
+}
+
+.map-label--city {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(42, 79, 81, 0.42);
+}
+
+#loading {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 20;
+  transform: translate(-50%, -50%);
+  padding: 9px 13px;
+  border-radius: 4px;
+  color: #244b50;
+  background: rgba(241, 248, 247, 0.9);
+  border: 1px solid rgba(34, 78, 82, 0.24);
+  font-size: 12px;
+  letter-spacing: 0;
+  transition: opacity 180ms ease;
+}
+
+#loading.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#loading.is-error {
+  max-width: min(520px, calc(100vw - 32px));
+  color: #8f382f;
+  border-color: rgba(176, 67, 52, 0.35);
+}

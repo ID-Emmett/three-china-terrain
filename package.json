@@ -1,0 +1,30 @@
+{
+  "name": "three-china-terrain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "data:download": "node tools/data-pipeline/download-data.mjs",
+    "data:build": "node tools/data-pipeline/build-data.mjs",
+    "data:validate": "node tools/data-pipeline/validate-assets.mjs",
+    "data:all": "npm run data:download && npm run data:build && npm run data:validate"
+  },
+  "dependencies": {
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pngjs": "6.0.5",
+    "@types/three": "0.185.4",
+    "earcut": "3.0.2",
+    "playwright-core": "^1.62.1",
+    "pngjs": "7.0.0",
+    "sharp": "^0.35.3",
+    "simplify-js": "1.2.4",
+    "typescript": "7.0.2",
+    "vite": "8.2.1"
+  }
+}

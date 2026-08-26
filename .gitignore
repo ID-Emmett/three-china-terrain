@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.vite/
+data/cache/
+temp/
+*.log
+.DS_Store
+
+# Local build and inspection artifacts
+*.tsbuildinfo
+.tmp-*
