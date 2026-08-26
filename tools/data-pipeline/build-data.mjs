@@ -15,7 +15,6 @@ import {
   uvToLonLat,
 } from './config.mjs';
 import { ensureDirectory, exists, readJson, writeJson } from './io.mjs';
-import { buildSurfaceFieldBundle, writeSurfaceFieldBundle } from './surface-field.mjs';
 
 const { PNG } = pngjs;
 const NASA_IMAGERY_FILE = path.join(CACHE_ROOT, 'nasa-blue-marble-2004-08-21600.jpg');
@@ -112,7 +111,6 @@ async function buildReliefTexture(sourceHeights, width, height) {
   await sharp(output, { raw: { width, height, channels: 4 } })
     .webp({ quality: 90, alphaQuality: 90, smartSubsample: true, effort: 6 })
     .toFile(path.join(OUTPUT_ROOT, 'terrain-relief.webp'));
-  return output;
 }
 
 async function buildTerrainImagery() {
@@ -1018,7 +1016,7 @@ async function main() {
     Buffer.from(heights.buffer, heights.byteOffset, heights.byteLength),
   );
   console.log('Baking multiscale terrain relief texture...');
-  const reliefPixels = await buildReliefTexture(reliefHeights, reliefWidth, reliefHeight);
+  await buildReliefTexture(reliefHeights, reliefWidth, reliefHeight);
   console.log('Reprojecting NASA Blue Marble terrain imagery...');
   const terrainImagery = await buildTerrainImagery();
 
@@ -1040,19 +1038,8 @@ async function main() {
     },
   };
   await writeJson(path.join(OUTPUT_ROOT, 'terrain-meta.json'), terrainMeta);
-  const surfaceBundle = buildSurfaceFieldBundle(
-    { ...terrainMeta, reliefResidualRangeMeters: RELIEF_RESIDUAL_RANGE_METERS },
-    heights,
-    reliefPixels,
-    reliefWidth,
-    reliefHeight,
-  );
-  const terrainSurfaceFile = 'terrain-surface.bin.gz';
-  await writeSurfaceFieldBundle(path.join(OUTPUT_ROOT, terrainSurfaceFile), surfaceBundle);
-
   const files = [
     terrainHeightFile,
-    terrainSurfaceFile,
     'terrain-relief.webp',
     'terrain-imagery.jpg',
     'terrain-meta.json',
@@ -1063,16 +1050,12 @@ async function main() {
   const sizes = Object.fromEntries(await Promise.all(files.map(async (file) => [file, await fileSize(file)])));
 
   await writeJson(path.join(OUTPUT_ROOT, 'scene-manifest.json'), {
-    version: 13,
+    version: 14,
     generatedAt: new Date().toISOString(),
     region: REGION,
     terrain: {
       metaUrl: '/data/terrain-meta.json',
       heightUrl: `/data/${terrainHeightFile}`,
-      surfaceUrl: `/data/${terrainSurfaceFile}`,
-      surfaceWidth: surfaceBundle.levels[0].width,
-      surfaceHeight: surfaceBundle.levels[0].height,
-      surfaceMipLevels: surfaceBundle.levels.length,
       reliefTextureUrl: '/data/terrain-relief.webp',
       reliefWidth,
       reliefHeight,

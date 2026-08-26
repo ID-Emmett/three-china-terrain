@@ -1,16 +1,12 @@
 import * as THREE from 'three/webgpu';
 import type { TerrainMeta } from '../types/scene';
 import type { TerrainWorkerSource } from './TerrainGeometryWorkerProtocol';
+import {
+  buildTerrainRenderHeightGrid,
+  TERRAIN_RENDER_GRID_SCALE,
+} from './TerrainSurfaceField';
 
 const MIN_TRIANGLE_AREA_UV = 1e-12;
-const RENDER_GRID_SCALE = 1.5;
-
-function cubic(p0: number, p1: number, p2: number, p3: number, t: number): number {
-  return p1 + 0.5 * t * (
-    p2 - p0
-    + t * (2 * p0 - 5 * p1 + 4 * p2 - p3 + t * (3 * (p1 - p2) + p3 - p0))
-  );
-}
 
 export class TerrainData {
   public readonly renderWidth: number;
@@ -32,8 +28,8 @@ export class TerrainData {
     // A 1.5x interpolated grid smooths DEM-sized facets without spending a
     // million triangles on values the source DEM does not contain. Relief and
     // generated material detail provide the higher-frequency visual signal.
-    this.renderWidth = Math.round(meta.width * RENDER_GRID_SCALE);
-    this.renderHeight = Math.round(meta.height * RENDER_GRID_SCALE);
+    this.renderWidth = Math.round(meta.width * TERRAIN_RENDER_GRID_SCALE);
+    this.renderHeight = Math.round(meta.height * TERRAIN_RENDER_GRID_SCALE);
     this.coastMask = coastMask;
     this.coastMaskWidth = coastMaskWidth;
     this.coastMaskHeight = coastMaskHeight;
@@ -42,7 +38,7 @@ export class TerrainData {
     if (renderHeights && renderHeights.length !== expectedRenderHeightCount) {
       throw new Error(`Precomputed terrain surface size mismatch: ${renderHeights.length} !== ${expectedRenderHeightCount}`);
     }
-    this.renderHeights = renderHeights ?? this.buildRenderHeightGrid();
+    this.renderHeights = renderHeights ?? buildTerrainRenderHeightGrid(meta, heights).data;
   }
 
   public createGeometry(options: TerrainGeometryOptions = {}): THREE.BufferGeometry {
@@ -506,48 +502,6 @@ export class TerrainData {
     return output;
   }
 
-  private buildRenderHeightGrid(): Float32Array {
-    const output = new Float32Array(this.renderWidth * this.renderHeight);
-    for (let y = 0; y < this.renderHeight; y += 1) {
-      const v = y / (this.renderHeight - 1);
-      for (let x = 0; x < this.renderWidth; x += 1) {
-        output[y * this.renderWidth + x] = this.sampleSourceSmooth(
-          x / (this.renderWidth - 1),
-          v,
-        );
-      }
-    }
-
-    // A small edge-preserving pass removes isolated source-DEM spikes that
-    // otherwise read as razor-dark ravines after vertical exaggeration. Sea
-    // cells and the one-cell shoreline band stay untouched so the coast mask
-    // remains watertight.
-    const smoothed = new Float32Array(output);
-    for (let y = 1; y < this.renderHeight - 1; y += 1) {
-      for (let x = 1; x < this.renderWidth - 1; x += 1) {
-        const index = y * this.renderWidth + x;
-        const center = output[index];
-        if (center <= 0) continue;
-        const north = output[index - this.renderWidth];
-        const south = output[index + this.renderWidth];
-        const west = output[index - 1];
-        const east = output[index + 1];
-        const northwest = output[index - this.renderWidth - 1];
-        const northeast = output[index - this.renderWidth + 1];
-        const southwest = output[index + this.renderWidth - 1];
-        const southeast = output[index + this.renderWidth + 1];
-        if ([north, south, west, east, northwest, northeast, southwest, southeast].some((value) => value <= 0)) continue;
-        const blur = (
-          center * 4
-          + (north + south + west + east) * 2
-          + northwest + northeast + southwest + southeast
-        ) / 16;
-        smoothed[index] = THREE.MathUtils.lerp(center, blur, 0.18);
-      }
-    }
-    return smoothed;
-  }
-
   private buildRenderCoastGrid(): Float32Array {
     const output = new Float32Array(this.renderWidth * this.renderHeight);
     for (let y = 0; y < this.renderHeight; y += 1) {
@@ -559,55 +513,6 @@ export class TerrainData {
       }
     }
     return output;
-  }
-
-  private sampleSourceSmooth(u: number, v: number): number {
-    const { width, height } = this.meta;
-    const x = THREE.MathUtils.clamp(u, 0, 1) * (width - 1);
-    const y = THREE.MathUtils.clamp(v, 0, 1) * (height - 1);
-    const x1 = Math.floor(x);
-    const y1 = Math.floor(y);
-    const tx = x - x1;
-    const ty = y - y1;
-    const sample = (sx: number, sy: number): number => this.heights[
-      THREE.MathUtils.clamp(sy, 0, height - 1) * width
-      + THREE.MathUtils.clamp(sx, 0, width - 1)
-    ];
-
-    let containsSea = false;
-    let localMinimum = Number.POSITIVE_INFINITY;
-    let localMaximum = Number.NEGATIVE_INFINITY;
-    let row0 = 0;
-    let row1 = 0;
-    let row2 = 0;
-    let row3 = 0;
-    for (let row = -1; row <= 2; row += 1) {
-      const p0 = sample(x1 - 1, y1 + row);
-      const p1 = sample(x1, y1 + row);
-      const p2 = sample(x1 + 1, y1 + row);
-      const p3 = sample(x1 + 2, y1 + row);
-      containsSea ||= p0 === 0 || p1 === 0 || p2 === 0 || p3 === 0;
-      localMinimum = Math.min(localMinimum, p0, p1, p2, p3);
-      localMaximum = Math.max(localMaximum, p0, p1, p2, p3);
-      const value = cubic(p0, p1, p2, p3, tx);
-      if (row === -1) row0 = value;
-      else if (row === 0) row1 = value;
-      else if (row === 1) row2 = value;
-      else row3 = value;
-    }
-    if (!containsSea) {
-      return THREE.MathUtils.clamp(cubic(row0, row1, row2, row3, ty), localMinimum, localMaximum);
-    }
-
-    const a = sample(x1, y1);
-    const b = sample(x1 + 1, y1);
-    const c = sample(x1, y1 + 1);
-    const d = sample(x1 + 1, y1 + 1);
-    return THREE.MathUtils.lerp(
-      THREE.MathUtils.lerp(a, b, tx),
-      THREE.MathUtils.lerp(c, d, tx),
-      ty,
-    );
   }
 
   private makeVertex(u: number, v: number, forceSeaLevel: boolean): TerrainVertex {

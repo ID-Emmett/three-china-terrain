@@ -1,5 +1,5 @@
 {
-  "version": 13,
+  "version": 14,
   "generatedAt": "2026-08-26T03:16:57.034Z",
   "region": {
     "west": 70,
@@ -33,11 +33,7 @@
       "east": 145,
       "south": 3,
       "north": 58
-    },
-    "surfaceUrl": "/data/terrain-surface.bin.gz",
-    "surfaceWidth": 768,
-    "surfaceHeight": 576,
-    "surfaceMipLevels": 4
+    }
   },
   "terrainImagery": {
     "url": "/data/terrain-imagery.jpg",
@@ -93,8 +89,7 @@
     "province-boundary.bin.gz": 69326,
     "province-labels.json": 4089,
     "city-boundary.bin.gz": 119852,
-    "city-labels.json": 42046,
-    "terrain-surface.bin.gz": 1912389
+    "city-labels.json": 42046
   },
   "topology": {
     "landMask": "/data/ocean-mask.bin.gz",

@@ -4,7 +4,10 @@ import type { TerrainData, TerrainValidationReport } from './TerrainData';
 import { createTerrainDetailTexture } from './TerrainDetailTexture';
 import { TerrainGeometryBuilder } from './TerrainGeometryBuilder';
 import { TerrainMaterial } from './TerrainMaterial';
-import { createTerrainSurfaceTextures } from './TerrainSurfaceTexture';
+import {
+  applyTerrainSurfaceBundle,
+  createTerrainSurfaceTexture,
+} from './TerrainSurfaceTexture';
 
 type TerrainGeometryLod = 'overview' | 'regional' | 'detail';
 
@@ -56,26 +59,30 @@ export class TerrainLayer implements SceneLayer {
 
   public constructor(
     private readonly data: TerrainData,
-    terrainSurface: ArrayBuffer,
+    terrainSurface: Promise<ArrayBuffer>,
     coastMask: THREE.Texture,
     chinaMask: THREE.Texture,
     reliefTexture: THREE.Texture,
     terrainImagery: THREE.Texture,
   ) {
     this.object3d.name = 'TerrainLayer';
-    const surfaceTextures = createTerrainSurfaceTextures(terrainSurface);
+    const surfaceTexture = createTerrainSurfaceTexture(data.renderWidth, data.renderHeight);
     const detailTexture = createTerrainDetailTexture(128);
     this.material = new TerrainMaterial(
       coastMask,
       chinaMask,
-      surfaceTextures.surface,
-      surfaceTextures.normal,
+      surfaceTexture,
       detailTexture,
       reliefTexture,
       terrainImagery,
       data.meta.minimumElevationMeters,
       data.meta.maximumElevationMeters,
     );
+    void terrainSurface.then((bundle) => {
+      if (!this.disposed) applyTerrainSurfaceBundle(surfaceTexture, bundle);
+    }).catch((error: unknown) => {
+      console.error('Terrain derived surface generation failed; using the lightweight fallback material.', error);
+    });
     this.geometryBuilder = new TerrainGeometryBuilder(data.createWorkerSource());
 
     for (const lod of LOD_ORDER) {

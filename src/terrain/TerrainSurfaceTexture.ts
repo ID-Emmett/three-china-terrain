@@ -1,103 +1,61 @@
 import * as THREE from 'three/webgpu';
+import {
+  decodeTerrainSurfaceBundle,
+  TERRAIN_SURFACE_MIP_LEVELS,
+  type TerrainSurfaceLevel,
+} from './TerrainSurfaceField';
 
-const MAGIC = 'TSF2';
-
-export interface TerrainSurfaceTextures {
-  surface: THREE.DataTexture;
-  normal: THREE.DataTexture;
-  width: number;
-  height: number;
-  mipLevels: number;
-}
-
-export function decodeTerrainSurfaceHeights(
-  buffer: ArrayBuffer,
-  minimumElevationMeters: number,
-  maximumElevationMeters: number,
-): Float32Array {
-  const view = new DataView(buffer);
-  if (buffer.byteLength < 16) throw new Error('Terrain surface field is truncated.');
-  const magic = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
-  if (magic !== MAGIC) throw new Error(`Unsupported terrain surface field: ${magic}.`);
-  const width = view.getUint32(8, true);
-  const height = view.getUint32(12, true);
-  const surfaceOffset = 16;
-  const byteLength = width * height * 4;
-  if (surfaceOffset + byteLength > buffer.byteLength) throw new Error('Terrain surface base level is truncated.');
-  const pixels = new Uint8Array(buffer, surfaceOffset, byteLength);
-  const heights = new Float32Array(width * height);
-  const range = maximumElevationMeters - minimumElevationMeters;
-  for (let y = 0; y < height; y += 1) {
-    const textureY = height - y - 1;
-    for (let x = 0; x < width; x += 1) {
-      const offset = (textureY * width + x) * 4;
-      const normalized = ((pixels[offset] << 8) | pixels[offset + 1]) / 65535;
-      heights[y * width + x] = minimumElevationMeters + normalized * range;
-    }
+/**
+ * The placeholder lets the first terrain geometry render before the derived
+ * field is ready. Satellite imagery and baked relief remain visible while the
+ * material temporarily uses a flat normal and neutral local-shape factor.
+ */
+export function createTerrainSurfaceTexture(width: number, height: number): THREE.DataTexture {
+  const mipmaps: TerrainSurfaceLevel[] = [];
+  for (let level = 0; level < TERRAIN_SURFACE_MIP_LEVELS; level += 1) {
+    const mipWidth = Math.max(1, Math.floor(width / (2 ** level)));
+    const mipHeight = Math.max(1, Math.floor(height / (2 ** level)));
+    const data = new Uint8Array(mipWidth * mipHeight * 4);
+    data.fill(128);
+    for (let offset = 0; offset < data.length; offset += 4) data[offset] = 64;
+    mipmaps.push({ data, width: mipWidth, height: mipHeight });
   }
-  return heights;
-}
-
-export function createTerrainSurfaceTextures(buffer: ArrayBuffer): TerrainSurfaceTextures {
-  const view = new DataView(buffer);
-  if (buffer.byteLength < 8) throw new Error('Terrain surface field is truncated.');
-  const magic = String.fromCharCode(
-    view.getUint8(0),
-    view.getUint8(1),
-    view.getUint8(2),
-    view.getUint8(3),
+  const base = mipmaps[0];
+  const texture = new THREE.DataTexture(
+    base.data,
+    base.width,
+    base.height,
+    THREE.RGBAFormat,
+    THREE.UnsignedByteType,
   );
-  if (magic !== MAGIC) throw new Error(`Unsupported terrain surface field: ${magic}.`);
-  const mipLevels = view.getUint32(4, true);
-  if (mipLevels < 1 || mipLevels > 16) throw new Error(`Invalid terrain surface mip count: ${mipLevels}.`);
-  const surfaceMipmaps: Array<{ data: Uint8Array; width: number; height: number }> = [];
-  const normalMipmaps: Array<{ data: Uint8Array; width: number; height: number }> = [];
-  let offset = 8;
-  for (let level = 0; level < mipLevels; level += 1) {
-    if (offset + 8 > buffer.byteLength) throw new Error('Terrain surface mip header is truncated.');
-    const width = view.getUint32(offset, true);
-    const height = view.getUint32(offset + 4, true);
-    offset += 8;
-    const byteLength = width * height * 4;
-    if (width < 1 || height < 1 || offset + byteLength * 2 > buffer.byteLength) {
-      throw new Error(`Invalid terrain surface mip ${level}.`);
-    }
-    surfaceMipmaps.push({ data: new Uint8Array(buffer, offset, byteLength), width, height });
-    offset += byteLength;
-    normalMipmaps.push({ data: new Uint8Array(buffer, offset, byteLength), width, height });
-    offset += byteLength;
+  configureTexture(texture);
+  texture.name = 'TerrainDerivedSurfacePlaceholder';
+  texture.mipmaps = mipmaps;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.generateMipmaps = false;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+export function applyTerrainSurfaceBundle(texture: THREE.DataTexture, buffer: ArrayBuffer): void {
+  const mipmaps = decodeTerrainSurfaceBundle(buffer);
+  const base = mipmaps[0];
+  if (base.width !== texture.image.width || base.height !== texture.image.height
+    || mipmaps.length !== texture.mipmaps.length) {
+    throw new Error('Terrain derived surface layout does not match its GPU texture.');
   }
-  if (offset !== buffer.byteLength) throw new Error('Terrain surface field contains trailing bytes.');
+  texture.image = { data: base.data, width: base.width, height: base.height };
+  texture.mipmaps = mipmaps;
+  configureTexture(texture);
+  texture.name = 'TerrainDerivedSurface';
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.generateMipmaps = false;
+  texture.needsUpdate = true;
+}
 
-  const base = surfaceMipmaps[0];
-  const createTexture = (
-    name: string,
-    mipmaps: Array<{ data: Uint8Array; width: number; height: number }>,
-  ): THREE.DataTexture => {
-    const texture = new THREE.DataTexture(
-      mipmaps[0].data,
-      mipmaps[0].width,
-      mipmaps[0].height,
-      THREE.RGBAFormat,
-      THREE.UnsignedByteType,
-    );
-    texture.name = name;
-    texture.colorSpace = THREE.NoColorSpace;
-    texture.wrapS = THREE.ClampToEdgeWrapping;
-    texture.wrapT = THREE.ClampToEdgeWrapping;
-    texture.minFilter = THREE.LinearMipmapLinearFilter;
-    texture.magFilter = THREE.LinearFilter;
-    texture.generateMipmaps = false;
-    texture.mipmaps = mipmaps;
-    texture.needsUpdate = true;
-    return texture;
-  };
-
-  return {
-    surface: createTexture('TerrainSurfaceField', surfaceMipmaps),
-    normal: createTexture('TerrainNormalField', normalMipmaps),
-    width: base.width,
-    height: base.height,
-    mipLevels,
-  };
+function configureTexture(texture: THREE.DataTexture): void {
+  texture.colorSpace = THREE.NoColorSpace;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.magFilter = THREE.LinearFilter;
 }

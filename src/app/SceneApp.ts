@@ -17,7 +17,7 @@ import { TerrainData } from '../terrain/TerrainData';
 import { TerrainLayer } from '../terrain/TerrainLayer';
 import { TERRAIN_LOD_RANGES, TERRAIN_SCENE_WIDTH_UNITS } from '../terrain/TerrainLodConfig';
 import { createMapMaskTexture } from '../terrain/MapMaskTexture';
-import { decodeTerrainSurfaceHeights } from '../terrain/TerrainSurfaceTexture';
+import { TerrainSurfaceBuilder } from '../terrain/TerrainSurfaceBuilder';
 import { WeatherLayer } from '../weather/WeatherLayer';
 import { AssetManifestLoader } from './AssetManifestLoader';
 import { CameraController } from './CameraController';
@@ -63,6 +63,7 @@ export class SceneApp {
   private cameraController!: CameraController;
   private atmosphere!: AtmosphereLayer;
   private terrain!: TerrainLayer;
+  private terrainSurfaceBuilder?: TerrainSurfaceBuilder;
   private coastMaskTexture!: THREE.DataTexture;
   private chinaMaskTexture!: THREE.DataTexture;
   private terrainReliefTexture!: THREE.Texture;
@@ -151,22 +152,29 @@ export class SceneApp {
     this.terrainReliefTexture.magFilter = THREE.LinearFilter;
     this.terrainReliefTexture.generateMipmaps = true;
     this.terrainReliefTexture.needsUpdate = true;
+    this.terrainSurfaceBuilder = new TerrainSurfaceBuilder(this.assets.manifest, this.assets.heights);
+    const terrainPrepareStartedAt = performance.now();
+    const renderHeightResult = await this.terrainSurfaceBuilder.getRenderHeights();
+    this.params.metrics.dataLoadMs = Math.round(
+      this.assets.loadDurationMs + performance.now() - terrainPrepareStartedAt,
+    );
+    const terrainSurface = this.terrainSurfaceBuilder.buildSurface(
+      this.assets.terrainReliefBlob,
+      this.assets.manifest.terrain.reliefWidth,
+      this.assets.manifest.terrain.reliefHeight,
+    );
     const terrainData = new TerrainData(
       this.assets.manifest.terrain,
       this.assets.heights,
       this.assets.oceanMask,
       this.assets.manifest.ocean.maskWidth,
       this.assets.manifest.ocean.maskHeight,
-      decodeTerrainSurfaceHeights(
-        this.assets.terrainSurface,
-        this.assets.manifest.terrain.minimumElevationMeters,
-        this.assets.manifest.terrain.maximumElevationMeters,
-      ),
+      renderHeightResult.data,
     );
     this.atmosphere = new AtmosphereLayer();
     this.terrain = new TerrainLayer(
       terrainData,
-      this.assets.terrainSurface,
+      terrainSurface,
       this.coastMaskTexture,
       this.chinaMaskTexture,
       this.terrainReliefTexture,
@@ -260,6 +268,7 @@ export class SceneApp {
     this.adminLod?.dispose();
     this.atmosphere?.dispose();
     this.terrain?.dispose();
+    this.terrainSurfaceBuilder?.dispose();
     this.ocean?.dispose();
     this.boundaries?.dispose();
     this.labels?.dispose();

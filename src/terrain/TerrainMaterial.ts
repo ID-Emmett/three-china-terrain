@@ -34,14 +34,12 @@ type TerrainColorName =
 export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
   public readonly uniforms: Record<string, UniformEntry<unknown>>;
   private readonly surfaceTexture: THREE.DataTexture;
-  private readonly normalTexture: THREE.DataTexture;
   private readonly detailTexture: THREE.DataTexture;
 
   public constructor(
     coastMask: THREE.Texture,
     chinaMask: THREE.Texture,
     surfaceTexture: THREE.DataTexture,
-    normalTexture: THREE.DataTexture,
     detailTexture: THREE.DataTexture,
     reliefTexture: THREE.Texture,
     terrainImagery: THREE.Texture,
@@ -56,14 +54,12 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
       metalness: 0,
     });
     this.surfaceTexture = surfaceTexture;
-    this.normalTexture = normalTexture;
     this.detailTexture = detailTexture;
 
     const mapUv = uv();
     const distance = length(cameraPosition.sub(positionWorld));
     const materialMip = smoothstep(68, 260, distance).mul(3);
     const surfaceField = texture(surfaceTexture, mapUv).level(materialMip);
-    const normalField = texture(normalTexture, mapUv).level(materialMip);
     const reliefField = texture(reliefTexture, mapUv).level(materialMip.mul(0.72));
     const detailUv = vec2(
       mapUv.x.mul(17.3).add(mapUv.y.mul(5.1)),
@@ -73,9 +69,8 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
     const satellite = texture(terrainImagery, mapUv).rgb;
     const coastValue = texture(coastMask, mapUv).r;
     const chinaValue = texture(chinaMask, mapUv).r;
-    const elevation = surfaceField.r.mul(256).add(surfaceField.g).div(257).clamp(0, 1);
-    const curvature = surfaceField.b.mul(2).sub(1);
-    const cavity = surfaceField.a;
+    const elevation = surfaceField.r;
+    const localShapeFactor = surfaceField.g.mul(0.14).add(0.9);
     const heightResidual = reliefField.r.mul(2).sub(1);
     const broadLight = reliefField.g.mul(2).sub(1);
     const mediumLight = reliefField.b.mul(2).sub(1);
@@ -110,11 +105,7 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
       smoothstep(detailDistance.mul(0.34), detailDistance, distance),
     );
 
-    const baseNormalXZ = normalField.rg.mul(2).sub(1);
-    const baseNormalY = sqrt(float(1).sub(dot(baseNormalXZ, baseNormalXZ)).max(0));
-    const baseNormalLocal = vec3(baseNormalXZ.x, baseNormalY, baseNormalXZ.y).normalize();
-    const overviewNormalLocal = mix(baseNormalLocal, vec3(0, 1, 0), 0.12).normalize();
-    const detailedNormalXZ = normalField.ba.mul(2).sub(1);
+    const detailedNormalXZ = surfaceField.ba.mul(2).sub(1);
     const detailedNormalY = sqrt(float(1).sub(dot(detailedNormalXZ, detailedNormalXZ)).max(0));
     const detailedNormalLocal = vec3(
       detailedNormalXZ.x,
@@ -122,9 +113,9 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
       detailedNormalXZ.y,
     ).normalize();
     const terrainNormalLocal = mix(
-      overviewNormalLocal,
+      vec3(0, 1, 0),
       detailedNormalLocal,
-      detailLod.mul(0.9),
+      float(0.88).add(detailLod.mul(0.12)),
     ).normalize();
     const terrainNormalView = transformNormalToView(terrainNormalLocal);
 
@@ -225,9 +216,7 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
       valleyMask.mul(0.18),
     );
 
-    terrainColor = terrainColor
-      .mul(float(0.94).add(cavity.oneMinus().mul(0.06)))
-      .mul(float(0.98).add(curvature.mul(0.035)));
+    terrainColor = terrainColor.mul(localShapeFactor);
     terrainColor = mix(
       terrainColor,
       terrainColor.mul(vec3(1.08, 1.025, 0.92)),
@@ -356,7 +345,6 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
 
   public override dispose(): void {
     this.surfaceTexture.dispose();
-    this.normalTexture.dispose();
     this.detailTexture.dispose();
     super.dispose();
   }
