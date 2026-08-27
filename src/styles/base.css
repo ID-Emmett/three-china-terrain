@@ -46,13 +46,21 @@ body {
   z-index: 2;
 }
 
-.mode-toolbar {
+.map-controls {
   position: absolute;
   left: 50%;
   top: 16px;
   z-index: 5;
-  display: inline-flex;
+  display: flex;
+  max-width: calc(100vw - 32px);
+  align-items: center;
+  gap: 6px;
+  flex-direction: column;
   transform: translateX(-50%);
+}
+
+.mode-toolbar {
+  display: inline-flex;
   padding: 3px;
   border: 1px solid rgba(30, 74, 80, 0.22);
   border-radius: 6px;
@@ -81,10 +89,78 @@ body {
   background: rgba(71, 160, 165, 0.25);
 }
 
+.route-legend {
+  display: flex;
+  max-width: min(760px, calc(100vw - 32px));
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 5px 14px;
+  padding: 6px 9px;
+  border: 1px solid rgba(30, 62, 65, 0.18);
+  border-radius: 5px;
+  color: #284649;
+  background: rgba(240, 246, 244, 0.88);
+  box-shadow: 0 4px 14px rgba(14, 34, 36, 0.14);
+  backdrop-filter: blur(7px);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.route-legend[hidden] {
+  display: none;
+}
+
+.route-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.route-legend__swatch {
+  width: 18px;
+  height: 3px;
+  flex: 0 0 auto;
+  border-radius: 1px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--route-a) 0 7px,
+    transparent 7px 10px
+  );
+  box-shadow: 0 0 5px color-mix(in srgb, var(--route-a) 65%, transparent);
+}
+
+.route-legend__swatch--a {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--route-a) 0 7px,
+    transparent 7px 10px
+  );
+  box-shadow: 0 0 5px color-mix(in srgb, var(--route-a) 65%, transparent);
+}
+
+.route-legend__swatch--b {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--route-b) 0 7px,
+    transparent 7px 10px
+  );
+  box-shadow: 0 0 5px color-mix(in srgb, var(--route-b) 65%, transparent);
+}
+
 @media (max-width: 520px) {
-  .mode-toolbar {
+  .map-controls {
     left: 12px;
+    right: 12px;
+    max-width: none;
+    align-items: flex-start;
     transform: none;
+  }
+
+  .route-legend {
+    max-width: 100%;
+    justify-content: flex-start;
   }
 }
 
@@ -93,16 +169,14 @@ body {
   --label-bg-opacity: 0.22;
   padding: 0;
   border: 0;
-  color: rgba(25, 57, 61, var(--label-opacity));
+  color: rgba(246, 249, 247, var(--label-opacity));
   background: transparent;
   font-size: 12px;
-  font-weight: 500;
-  line-height: 1.15;
+  font-weight: 400;
+  line-height: 1.2;
   letter-spacing: 0;
   white-space: nowrap;
-  text-shadow:
-    0 1px 3px rgba(255, 255, 255, 0.88),
-    0 0 7px rgba(255, 255, 255, 0.45);
+  text-shadow: 0 1px 2px rgba(8, 24, 25, 0.82);
   transition: opacity 180ms ease, color 180ms ease;
   user-select: none;
 }
@@ -112,23 +186,32 @@ body {
 }
 
 .business-label--station.is-priority {
-  color: rgba(19, 57, 62, var(--label-opacity));
-  font-weight: 600;
+  color: rgba(255, 255, 255, var(--label-opacity));
+  font-weight: 500;
 }
 
 .business-label--station.is-center {
-  color: rgba(132, 76, 20, var(--label-opacity));
+  color: rgba(255, 224, 177, var(--label-opacity));
 }
 
 .business-label--metric {
-  padding: 0;
-  color: rgba(22, 99, 104, 0.88);
-  background: transparent;
+  --route-color: #d7eeee;
+  padding: 3px 6px;
+  border-left: 2px solid var(--route-color);
+  border-radius: 2px;
+  color: rgba(248, 250, 248, 0.96);
+  background: rgba(11, 30, 31, 0.68);
   font-size: 11px;
+  font-weight: 500;
+  text-shadow: none;
 }
 
 .business-label--metric.is-hovered {
-  color: #a34f13;
+  color: #fff4d8;
+}
+
+.business-label--metric.is-dimmed {
+  opacity: 0.28;
 }
 
 .business-label.is-suppressed {
@@ -138,7 +221,7 @@ body {
 
 .map-label {
   padding: 1px 2px;
-  color: rgba(35, 64, 66, 0.78);
+  color: rgba(238, 243, 240, 0.9);
   background: transparent;
   border: 0;
   box-shadow: none;
@@ -146,23 +229,20 @@ body {
   letter-spacing: 0;
   white-space: nowrap;
   user-select: none;
-  transform: translateZ(0);
-  will-change: opacity;
-  text-shadow:
-    0 1px 2px rgba(255, 255, 255, 0.82),
-    0 0 4px rgba(255, 255, 255, 0.42);
+  will-change: transform, opacity;
+  text-shadow: 0 1px 2px rgba(10, 27, 28, 0.72);
 }
 
 .map-label--province {
   font-size: 12px;
-  font-weight: 600;
-  color: rgba(35, 75, 77, 0.58);
+  font-weight: 500;
+  color: rgba(238, 243, 240, 0.9);
 }
 
 .map-label--city {
   font-size: 12px;
-  font-weight: 500;
-  color: rgba(42, 79, 81, 0.42);
+  font-weight: 400;
+  color: rgba(216, 226, 223, 0.72);
 }
 
 #loading {

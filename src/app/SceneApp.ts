@@ -85,8 +85,7 @@ export class SceneApp {
   private metricFrameCount = 0;
   private metricElapsed = 0;
   private lastLabelLayout = 0;
-  private lastLabelRender = 0;
-  private currentMode: RouteMode = 'radial';
+  private currentMode: RouteMode = 'comparison';
   private pointerPickFrame = 0;
   private pendingPointer?: { x: number; y: number };
   private deferredAdminHandle?: number;
@@ -240,10 +239,7 @@ export class SceneApp {
     this.applyEnvironmentParams();
     this.applyAllBoundaryStyles();
     this.applyBusinessParams();
-    // Start with the whole China terrain in frame. Route modes still update
-    // their station set, but an automatic Guangdong close-up hides the
-    // macro-relief the map is meant to showcase.
-    this.setMode('radial', false);
+    this.setMode('comparison');
     if (this.inspector) {
       this.setupInspectorParameters();
       const inspectorPanel = this.inspector.domElement.querySelector('.profiler-panel.visible');
@@ -335,11 +331,10 @@ export class SceneApp {
     this.adminLod.update(deltaSeconds);
 
     this.renderer.render(this.scene, this.camera);
-    if (cameraChanged || elapsedSeconds - this.lastLabelRender >= 0.1) {
-      this.lastLabelRender = elapsedSeconds;
-      this.labelRenderer.render(this.scene, this.camera);
-    }
-    if (cameraChanged || elapsedSeconds - this.lastLabelLayout >= 0.15) {
+    // CSS2D transforms must follow the camera on the same frame. Throttling
+    // this renderer makes province and city names visibly trail wheel zooms.
+    this.labelRenderer.render(this.scene, this.camera);
+    if (cameraChanged || elapsedSeconds - this.lastLabelLayout >= 0.08) {
       this.lastLabelLayout = elapsedSeconds;
       this.labels.updateCollision(this.camera, this.container.clientWidth, this.container.clientHeight);
       this.businessLabels.update(
@@ -442,7 +437,11 @@ export class SceneApp {
   private applyBusinessParams(): void {
     this.routeLayer.setStyle(this.params.route);
     this.stationLayer.setStyle(this.params.station);
-    this.businessLabels.applyStyle(this.params.station);
+    this.businessLabels.applyStyle(this.params.station, this.params.route);
+    this.modeToolbar.setRouteColors(
+      this.params.route.routeAColor,
+      this.params.route.routeBColor,
+    );
     this.weatherLayer.setStyle(this.params.weather);
   }
 
@@ -473,8 +472,8 @@ export class SceneApp {
   private applyAllBoundaryStyles(): void {
     this.applyBoundaryStyle('province');
     this.applyBoundaryStyle('city');
-    this.labels.setOpacity('province', this.params.admin.provinceOpacity * 0.72);
-    this.labels.setOpacity('city', this.params.admin.cityOpacity * 0.76);
+    this.labels.setOpacity('province', this.params.admin.provinceLabelOpacity);
+    this.labels.setOpacity('city', this.params.admin.cityLabelOpacity);
     this.labels.setColor('province', this.params.admin.provinceLabelColor);
     this.labels.setColor('city', this.params.admin.cityLabelColor);
     this.labels.setFontSize('province', this.params.admin.provinceLabelSize);
@@ -579,6 +578,8 @@ export class SceneApp {
     const adminLabelColors = { province: new THREE.Color(this.params.admin.provinceLabelColor), city: new THREE.Color(this.params.admin.cityLabelColor) };
     admin.addColor(adminLabelColors, 'province').name('省名颜色').onChange((value) => { this.params.admin.provinceLabelColor = `#${value.getHexString()}`; this.applyAllBoundaryStyles(); });
     admin.addColor(adminLabelColors, 'city').name('市名颜色').onChange((value) => { this.params.admin.cityLabelColor = `#${value.getHexString()}`; this.applyAllBoundaryStyles(); });
+    admin.add(this.params.admin, 'provinceLabelOpacity', 0, 1, 0.01).name('省名透明度').onChange(() => this.applyAllBoundaryStyles());
+    admin.add(this.params.admin, 'cityLabelOpacity', 0, 1, 0.01).name('市名透明度').onChange(() => this.applyAllBoundaryStyles());
     admin.add(this.params.admin, 'provinceOpacity', 0, 1, 0.01).name('省界透明度').onChange(() => this.applyBoundaryStyle('province'));
     admin.add(this.params.admin, 'cityOpacity', 0, 1, 0.01).name('市界透明度').onChange(() => this.applyBoundaryStyle('city'));
     admin.add(this.params.admin, 'provinceWidth', 0.3, 4, 0.05).name('省界宽度').onChange(() => this.applyBoundaryStyle('province'));
@@ -601,11 +602,15 @@ export class SceneApp {
     const route = root.addFolder('路线');
     const routeColors = {
       main: new THREE.Color(this.params.route.mainColor),
+      routeA: new THREE.Color(this.params.route.routeAColor),
+      routeB: new THREE.Color(this.params.route.routeBColor),
       hover: new THREE.Color(this.params.route.hoverColor),
     };
     route.addColor(routeColors, 'main').name('主路线颜色').onChange((value) => { this.params.route.mainColor = `#${value.getHexString()}`; this.routeLayer.setStyle(this.params.route); });
+    route.addColor(routeColors, 'routeA').name('路线 A').onChange((value) => { this.params.route.routeAColor = `#${value.getHexString()}`; this.applyBusinessParams(); });
+    route.addColor(routeColors, 'routeB').name('路线 B').onChange((value) => { this.params.route.routeBColor = `#${value.getHexString()}`; this.applyBusinessParams(); });
     route.addColor(routeColors, 'hover').name('Hover 强调色').onChange((value) => { this.params.route.hoverColor = `#${value.getHexString()}`; this.routeLayer.setStyle(this.params.route); });
-    route.add(this.params.route, 'pixelWidth', 0.8, 7, 0.1).name('屏幕像素宽度').onChange(() => this.routeLayer.setStyle(this.params.route));
+    route.add(this.params.route, 'pixelWidth', 0.8, 7, 0.1).name('虚线主体宽度').onChange(() => this.routeLayer.setStyle(this.params.route));
     route.add(this.params.route, 'dashLength', 0.1, 2.5, 0.01).name('虚线段长度（场景单位）').onChange(() => this.routeLayer.setStyle(this.params.route));
     route.add(this.params.route, 'dashGap', 0.05, 2, 0.01).name('虚线间隔（场景单位）').onChange(() => this.routeLayer.setStyle(this.params.route));
     route.add(this.params.route, 'dashRoundness', 0, 1, 0.01).name('虚线圆角').onChange(() => this.routeLayer.setStyle(this.params.route));
@@ -666,7 +671,7 @@ export class SceneApp {
       this.boundaries.setLevelData('city', [assets.cityBoundary]);
       this.labels.setLevelData('city', assets.cityLabels);
       this.applyBoundaryStyle('city');
-      this.labels.setOpacity('city', this.params.admin.cityOpacity * 0.76);
+      this.labels.setOpacity('city', this.params.admin.cityLabelOpacity);
       this.labels.setColor('city', this.params.admin.cityLabelColor);
       this.labels.setFontSize('city', this.params.admin.cityLabelSize);
       const activeStations = stationsForMode(this.currentMode);

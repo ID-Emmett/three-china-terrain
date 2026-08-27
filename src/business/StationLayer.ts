@@ -73,12 +73,12 @@ export class StationLayer implements SceneLayer {
   }
 
   public setStyle(params: DebugParams['station']): void {
+    this.pixelSize = params.pixelSize * params.haloSize;
     for (const entry of this.entries) {
-      this.pixelSize = params.pixelSize * params.haloSize;
       entry.baseOpacity = params.haloOpacity;
-      const materialColor = entry.datum.center ? '#ffad3f' : '#55ffff';
+      const materialColor = entry.datum.center ? '#ffb24d' : '#f4f8f6';
       entry.material.color.set(materialColor);
-      entry.material.color.multiplyScalar(0.72 + params.centerBrightness * 0.34);
+      entry.material.color.multiplyScalar(0.86 + params.centerBrightness * 0.14);
     }
     this.applyVisualState();
   }
@@ -99,9 +99,9 @@ export class StationLayer implements SceneLayer {
         depthWrite: false,
         toneMapped: false,
         opacity: 0.48,
-        blending: THREE.AdditiveBlending,
+        blending: THREE.NormalBlending,
       });
-      material.color.set('#55ffff');
+      material.color.set('#f4f8f6');
       const sprite = new THREE.Sprite(material);
       sprite.name = datum.name;
       sprite.renderOrder = 25;
@@ -142,9 +142,20 @@ export class StationLayer implements SceneLayer {
   }
 
   private applyVisualState(): void {
+    const comparisonRouteIds = this.hoveredRoute?.comparisonRouteIds ?? [];
+    const connectedStationIds = this.hoveredRoute?.mode === 'comparison'
+      ? new Set(
+        ROUTES.filter((route) => route.mode === 'comparison'
+          && route.comparisonRouteIds?.some((id) => comparisonRouteIds.includes(id)))
+          .flatMap((route) => [route.from, route.to]),
+      )
+      : null;
     for (const entry of this.entries) {
       const connected = this.hoveredRoute
-        ? entry.datum.id === this.hoveredRoute.from || entry.datum.id === this.hoveredRoute.to
+        ? connectedStationIds
+          ? connectedStationIds.has(entry.datum.id)
+          : entry.datum.id === this.hoveredRoute.from
+            || entry.datum.id === this.hoveredRoute.to
         : false;
       const dimmed = this.hoveredRoute !== null && !connected;
       entry.opacityTarget = dimmed
@@ -162,9 +173,10 @@ function createDotTexture(size = 64): THREE.DataTexture {
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
       const radius = Math.hypot(x - center, y - center) / center;
-      const core = Math.max(0, 1 - Math.min(1, radius / 0.2));
-      const halo = Math.pow(Math.max(0, 1 - radius), 2.1) * 0.72;
-      const alpha = Math.min(1, core * 0.98 + halo);
+      const core = radius <= 0.2 ? 1 : Math.max(0, 1 - (radius - 0.2) / 0.12);
+      const ring = Math.max(0, 1 - Math.abs(radius - 0.34) / 0.055) * 0.82;
+      const halo = Math.pow(Math.max(0, 1 - radius), 3.6) * 0.2;
+      const alpha = Math.min(1, core + ring + halo);
       const offset = (y * size + x) * 4;
       data[offset] = 255;
       data[offset + 1] = 255;

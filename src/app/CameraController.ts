@@ -96,15 +96,12 @@ export class CameraController {
     const horizontalFov = 2 * Math.atan(Math.tan(verticalFov * 0.5) * this.camera.aspect);
     const widthDistance = (spanX * 0.68) / Math.max(0.1, Math.tan(horizontalFov * 0.5));
     const depthDistance = (spanZ * 0.82) / Math.max(0.1, Math.tan(verticalFov * 0.5));
-    // Route focus is intentionally province-scale. A 6-10 unit framing only
-    // shows a city-sized patch of Guangdong and makes the terrain LOD appear
-    // wrong for a China-wide map. Keep several province widths in view so the
-    // macro mountain structure and province boundaries share the same camera
-    // scale as the material LOD bands.
+    // Keep the route bounds in frame with enough regional context while
+    // leaving short alternative segments large enough to compare.
     const distance = THREE.MathUtils.clamp(
-      Math.max(widthDistance, depthDistance) * 1.45 + 8,
-      30,
-      74,
+      Math.max(widthDistance, depthDistance) * 1.08 + 4,
+      22,
+      66,
     );
 
     this.controls.target.set(

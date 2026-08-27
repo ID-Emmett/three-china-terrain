@@ -47,6 +47,8 @@ export interface DebugParams {
     cityColor: string;
     provinceLabelColor: string;
     cityLabelColor: string;
+    provinceLabelOpacity: number;
+    cityLabelOpacity: number;
     provinceOpacity: number;
     cityOpacity: number;
     provinceWidth: number;
@@ -72,6 +74,8 @@ export interface DebugParams {
   };
   route: {
     mainColor: string;
+    routeAColor: string;
+    routeBColor: string;
     hoverColor: string;
     pixelWidth: number;
     dashLength: number;
@@ -161,8 +165,10 @@ export function createDebugParams(): DebugParams {
       showCityLabels: true,
       provinceColor: '#e0eee7',
       cityColor: '#a9c9c0',
-      provinceLabelColor: '#c1dcda',
-      cityLabelColor: '#abcdca',
+      provinceLabelColor: '#eef3f0',
+      cityLabelColor: '#d8e2df',
+      provinceLabelOpacity: 0.9,
+      cityLabelOpacity: 0.72,
       provinceOpacity: 0.38,
       cityOpacity: 0.08,
       provinceWidth: 1.1,
@@ -187,31 +193,33 @@ export function createDebugParams(): DebugParams {
       dprLimit: 1.4,
     },
     route: {
-      mainColor: '#24e4e8',
-      hoverColor: '#ff8d32',
-      pixelWidth: 2.5,
-      dashLength: 0.72,
-      dashGap: 0.46,
+      mainColor: '#25d8dc',
+      routeAColor: '#ffad45',
+      routeBColor: '#24bfe8',
+      hoverColor: '#fff3cf',
+      pixelWidth: 2.8,
+      dashLength: 0.48,
+      dashGap: 0.34,
       dashRoundness: 0.82,
-      glowRange: 7.5,
-      glowIntensity: 0.72,
+      glowRange: 9,
+      glowIntensity: 1.25,
       opacity: 0.94,
-      flowSpeed: 0.9,
+      flowSpeed: 0.58,
       flowDirection: -1,
       flowLength: 1,
       liftHeight: 0.08,
-      arcHeight: 0.85,
+      arcHeight: 0.56,
     },
     station: {
-      pixelSize: 32,
-      haloSize: 1.4,
-      haloOpacity: 0.65,
-      centerBrightness: 1.25,
-      labelFontSize: 12,
-      labelOpacity: 0.92,
-      labelBackgroundOpacity: 0.28,
+      pixelSize: 18,
+      haloSize: 1.1,
+      haloOpacity: 0.92,
+      centerBrightness: 1.05,
+      labelFontSize: 11,
+      labelOpacity: 0.94,
+      labelBackgroundOpacity: 0.12,
       labelDistance: 125,
-      labelClusterDistance: 8,
+      labelClusterDistance: 6,
     },
     weather: {
       enabled: true,

@@ -1,4 +1,5 @@
 export type RouteMode = 'comparison' | 'radial';
+export type ComparisonRouteId = 'route-a' | 'route-b';
 
 import type { LegacyWeatherKind, StationWeather } from '../types/weather';
 
@@ -15,6 +16,7 @@ export interface StationDatum {
   provinceAdcode: number;
   priority: 1 | 2 | 3;
   center?: boolean;
+  labelOffset?: readonly [number, number];
   weather?: StationWeather | LegacyWeatherKind;
 }
 
@@ -23,17 +25,22 @@ export interface RouteDatum {
   mode: RouteMode;
   from: string;
   to: string;
-  distanceKm: number;
-  durationMinutes: number;
+  distanceKm?: number;
+  durationMinutes?: number;
+  comparisonRouteIds?: readonly ComparisonRouteId[];
+  comparisonShared?: boolean;
+  label?: string;
 }
 
 const COMPARISON_STATIONS: StationDatum[] = [
-  { id: 'yuhua', name: '雨花桃阳点部', u: 0.5752, v: 0.6158, provinceAdcode: 430000, priority: 3, weather: { cloudCover: 0.72, precipitation: 0.82, wind: { speed: 3.2, direction: 112 } } },
-  { id: 'muyun', name: '暮云桃阳二级中转场', u: 0.5787, v: 0.6111, provinceAdcode: 430000, priority: 2 },
-  { id: 'huanghua', name: '黄花中转场陆运二区', u: 0.5846, v: 0.6071, provinceAdcode: 430000, priority: 2, weather: { wind: { speed: 7.5, direction: 72 } } },
-  { id: 'xiaoshan', name: '萧山机场分拨二区', u: 0.6643, v: 0.5879, provinceAdcode: 330000, priority: 2, weather: { cloudCover: 0.88 } },
-  { id: 'tonglu', name: '桐庐凤川二级中转场', u: 0.6498, v: 0.5906, provinceAdcode: 330000, priority: 2 },
-  { id: 'jiande', name: '建德金溪点部', u: 0.6349, v: 0.5944, provinceAdcode: 330000, priority: 3 },
+  { id: 'shunqing-gaoping', name: '顺庆高坪点部', u: 0.481467, v: 0.571426, provinceAdcode: 510000, priority: 3, labelOffset: [0.5, 2.05] },
+  { id: 'shunqing-gaoping-hub', name: '顺庆高坪二级中转场', u: 0.482, v: 0.571596, provinceAdcode: 510000, priority: 2, labelOffset: [0.12, -0.8] },
+  { id: 'datang-hub', name: '大塘中转场一区', u: 0.577867, v: 0.697691, provinceAdcode: 440000, priority: 3, labelOffset: [0.5, 2.05] },
+  { id: 'baoan-airport', name: '宝安机场分拨二区', u: 0.584133, v: 0.704813, provinceAdcode: 440000, priority: 3, labelOffset: [1.05, 0.5] },
+  { id: 'yunshan-jiangbei', name: '云山江北二级中转场', u: 0.592, v: 0.697216, provinceAdcode: 440000, priority: 3, labelOffset: [-0.05, 0.5] },
+  { id: 'huijiang-shuikou', name: '惠江水口二级中转场', u: 0.593067, v: 0.697533, provinceAdcode: 440000, priority: 3, labelOffset: [0.5, 2.2] },
+  { id: 'dongxiang-dongxing', name: '东祥东星二级中转场', u: 0.591067, v: 0.698801, provinceAdcode: 440000, priority: 2, labelOffset: [1.08, 0.5] },
+  { id: 'dongxiang-yinghe', name: '东祥赢合点部', u: 0.590533, v: 0.699276, provinceAdcode: 440000, priority: 3, labelOffset: [0.5, -0.9] },
 ];
 
 const RADIAL_STATIONS: StationDatum[] = [
@@ -48,11 +55,17 @@ const RADIAL_STATIONS: StationDatum[] = [
 export const STATIONS: StationDatum[] = [...COMPARISON_STATIONS, ...RADIAL_STATIONS];
 
 export const ROUTES: RouteDatum[] = [
-  { id: 'cmp-1', mode: 'comparison', from: 'yuhua', to: 'muyun', distanceKm: 28, durationMinutes: 42 },
-  { id: 'cmp-2', mode: 'comparison', from: 'muyun', to: 'huanghua', distanceKm: 39, durationMinutes: 55 },
-  { id: 'cmp-3', mode: 'comparison', from: 'huanghua', to: 'xiaoshan', distanceKm: 830, durationMinutes: 620 },
-  { id: 'cmp-4', mode: 'comparison', from: 'xiaoshan', to: 'tonglu', distanceKm: 76, durationMinutes: 68 },
-  { id: 'cmp-5', mode: 'comparison', from: 'tonglu', to: 'jiande', distanceKm: 62, durationMinutes: 57 },
+  { id: 'cmp-a-shared-1', mode: 'comparison', from: 'shunqing-gaoping', to: 'shunqing-gaoping-hub', comparisonRouteIds: ['route-a'], comparisonShared: true },
+  { id: 'cmp-a-shared-2', mode: 'comparison', from: 'shunqing-gaoping-hub', to: 'datang-hub', comparisonRouteIds: ['route-a'], comparisonShared: true },
+  { id: 'cmp-b-shared-1', mode: 'comparison', from: 'shunqing-gaoping', to: 'shunqing-gaoping-hub', comparisonRouteIds: ['route-b'], comparisonShared: true },
+  { id: 'cmp-b-shared-2', mode: 'comparison', from: 'shunqing-gaoping-hub', to: 'datang-hub', comparisonRouteIds: ['route-b'], comparisonShared: true },
+  { id: 'cmp-a-1', mode: 'comparison', from: 'datang-hub', to: 'baoan-airport', comparisonRouteIds: ['route-a'], label: '路线 A · 宝安机场' },
+  { id: 'cmp-a-2', mode: 'comparison', from: 'baoan-airport', to: 'huijiang-shuikou', comparisonRouteIds: ['route-a'] },
+  { id: 'cmp-a-3', mode: 'comparison', from: 'huijiang-shuikou', to: 'dongxiang-yinghe', comparisonRouteIds: ['route-a'] },
+  { id: 'cmp-b-1', mode: 'comparison', from: 'datang-hub', to: 'yunshan-jiangbei', comparisonRouteIds: ['route-b'], label: '路线 B · 云山江北 / 东祥东星' },
+  { id: 'cmp-b-2', mode: 'comparison', from: 'yunshan-jiangbei', to: 'huijiang-shuikou', comparisonRouteIds: ['route-b'] },
+  { id: 'cmp-b-3', mode: 'comparison', from: 'huijiang-shuikou', to: 'dongxiang-dongxing', comparisonRouteIds: ['route-b'] },
+  { id: 'cmp-b-4', mode: 'comparison', from: 'dongxiang-dongxing', to: 'dongxiang-yinghe', comparisonRouteIds: ['route-b'] },
   { id: 'rad-1', mode: 'radial', from: 'dalingshan', to: 'guangzhou', distanceKm: 74, durationMinutes: 72 },
   { id: 'rad-2', mode: 'radial', from: 'dalingshan', to: 'huizhou', distanceKm: 96, durationMinutes: 95 },
   { id: 'rad-3', mode: 'radial', from: 'dalingshan', to: 'shenzhen', distanceKm: 58, durationMinutes: 63 },
@@ -61,6 +74,9 @@ export const ROUTES: RouteDatum[] = [
 ];
 
 export function formatRouteMetric(route: RouteDatum): string {
+  if (route.distanceKm === undefined || route.durationMinutes === undefined) {
+    return route.label ?? '';
+  }
   const hours = Math.floor(route.durationMinutes / 60);
   const minutes = route.durationMinutes % 60;
   return `${route.distanceKm} km · ${hours > 0 ? `${hours}h ` : ''}${minutes}m`;

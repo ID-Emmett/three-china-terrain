@@ -1,40 +1,60 @@
 import * as THREE from 'three/webgpu';
 import { smoothstep, uniform, uv } from 'three/tsl';
 
-export class RouteMaterial extends THREE.Line2NodeMaterial {
-  private readonly glow: boolean;
-  private readonly colorNodeUniform = uniform(new THREE.Color('#29e6e6'));
-  private readonly opacityUniform = uniform(0.9);
-  private readonly dimUniform = uniform(1);
-  private readonly dashSizeUniform = uniform(0.82);
-  private readonly gapSizeUniform = uniform(0.58);
-  private readonly offsetUniform = uniform(0);
-  private dimTarget = 1;
+export type RouteMaterialLayer = 'halo' | 'dash' | 'pulse';
 
-  public constructor(glow = false) {
+export class RouteMaterial extends THREE.Line2NodeMaterial {
+  private readonly colorNodeUniform = uniform(new THREE.Color('#29e6e6'));
+  private readonly highlightNodeUniform = uniform(new THREE.Color('#eaffff'));
+  private readonly opacityUniform = uniform(0.9);
+  private readonly interactionUniform = uniform(1);
+  private readonly dashSizeUniform = uniform(0.48);
+  private readonly gapSizeUniform = uniform(0.34);
+  private readonly offsetUniform = uniform(0);
+  private interactionTarget = 1;
+
+  public constructor(private readonly layer: RouteMaterialLayer) {
     super({
       dashed: true,
-      linewidth: 2.4,
+      linewidth: 2.6,
       transparent: true,
-      blending: glow ? THREE.AdditiveBlending : THREE.NormalBlending,
+      blending: layer === 'dash' ? THREE.NormalBlending : THREE.AdditiveBlending,
       depthTest: true,
       depthWrite: false,
       toneMapped: false,
-      alphaToCoverage: true,
+      alphaToCoverage: layer !== 'halo',
     });
-    this.glow = glow;
     this.worldUnits = false;
     this.dashed = true;
     this.dashSizeNode = this.dashSizeUniform;
     this.gapSizeNode = this.gapSizeUniform;
     this.offsetNode = this.offsetUniform;
 
-    const centerLight = smoothstep(0.04, 0.9, uv().x.abs()).oneMinus();
-    this.colorNode = this.colorNodeUniform.mul(centerLight.mul(0.22).add(0.78));
-    const opacity = this.opacityUniform.mul(this.dimUniform).clamp(0, 1);
-    this.opacityNode = this.glow
-      ? opacity.mul(smoothstep(0.18, 0.86, uv().x.abs()).oneMinus())
-      : opacity;
+    const across = uv().x.abs();
+    const softEdge = smoothstep(0.08, 1, across).oneMinus();
+    const centerLight = smoothstep(0.02, 0.7, across).oneMinus();
+
+    if (layer === 'halo') {
+      this.colorNode = this.colorNodeUniform.mul(centerLight.mul(0.16).add(0.84));
+      this.opacityNode = this.opacityUniform
+        .mul(this.interactionUniform)
+        .mul(softEdge.mul(softEdge))
+        .clamp(0, 1);
+    } else if (layer === 'pulse') {
+      this.colorNode = this.highlightNodeUniform;
+      this.opacityNode = this.opacityUniform
+        .mul(this.interactionUniform)
+        .mul(softEdge)
+        .clamp(0, 1);
+    } else {
+      this.colorNode = this.colorNodeUniform
+        .mul(centerLight.mul(0.12).add(0.88))
+        .add(this.highlightNodeUniform.mul(centerLight.mul(0.08)));
+      this.opacityNode = this.opacityUniform
+        .mul(this.interactionUniform)
+        .mul(softEdge)
+        .clamp(0, 1);
+    }
   }
 
   public setStyle(options: {
@@ -47,17 +67,24 @@ export class RouteMaterial extends THREE.Line2NodeMaterial {
     roundness: number;
   }): void {
     this.colorNodeUniform.value.set(options.color);
-    this.opacityUniform.value = this.glow
-      ? options.opacity * (0.12 + Math.min(1, options.glowStrength) * 0.26)
-      : options.opacity;
-    this.linewidth = this.glow
-      ? options.width + Math.max(2.5, options.glowRange)
-      : options.width;
-    this.alphaToCoverage = !this.glow && options.roundness > 0.1;
+    this.highlightNodeUniform.value.set(options.highlightColor);
+
+    if (this.layer === 'halo') {
+      this.opacityUniform.value = options.opacity
+        * (0.14 + THREE.MathUtils.clamp(options.glowStrength, 0, 2) * 0.16);
+      this.linewidth = options.width + Math.max(4, options.glowRange);
+    } else if (this.layer === 'pulse') {
+      this.opacityUniform.value = Math.min(1, options.opacity * 0.98);
+      this.linewidth = Math.max(1.1, options.width * 0.42);
+    } else {
+      this.opacityUniform.value = Math.min(1, options.opacity * 0.96);
+      this.linewidth = options.width;
+    }
+    this.alphaToCoverage = this.layer !== 'halo' && options.roundness > 0.1;
   }
 
-  public setInteraction(_selected: boolean, dimmed: boolean): void {
-    this.dimTarget = dimmed ? 0.34 : 1;
+  public setInteraction(selected: boolean, dimmed: boolean): void {
+    this.interactionTarget = dimmed ? 0.16 : selected ? 1.12 : 1;
   }
 
   public update(
@@ -68,10 +95,24 @@ export class RouteMaterial extends THREE.Line2NodeMaterial {
     dashLength: number,
     gapLength: number,
   ): void {
-    const response = 1 - Math.exp(-Math.min(deltaSeconds, 0.1) * 10);
-    this.dimUniform.value = THREE.MathUtils.lerp(this.dimUniform.value, this.dimTarget, response);
-    this.dashSizeUniform.value = Math.max(0.001, dashLength);
-    this.gapSizeUniform.value = Math.max(0.001, gapLength);
+    const response = 1 - Math.exp(-Math.min(deltaSeconds, 0.1) * 12);
+    this.interactionUniform.value = THREE.MathUtils.lerp(
+      this.interactionUniform.value,
+      this.interactionTarget,
+      response,
+    );
+
+    const safeDash = Math.max(0.04, dashLength);
+    const safeGap = Math.max(0.04, gapLength);
+    const period = safeDash + safeGap;
+    if (this.layer === 'pulse') {
+      const pulseLength = THREE.MathUtils.clamp(safeDash * 0.24, 0.055, period * 0.34);
+      this.dashSizeUniform.value = pulseLength;
+      this.gapSizeUniform.value = Math.max(0.04, period - pulseLength);
+    } else {
+      this.dashSizeUniform.value = safeDash;
+      this.gapSizeUniform.value = safeGap;
+    }
     this.offsetUniform.value = elapsedSeconds * speed * direction;
   }
 }
