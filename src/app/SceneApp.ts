@@ -8,7 +8,7 @@ import { BoundaryLayer } from '../admin/BoundaryLayer';
 import { LabelLayer } from '../admin/LabelLayer';
 import { AtmosphereLayer } from '../atmosphere/AtmosphereLayer';
 import { BusinessLabelLayer } from '../business/BusinessLabelLayer';
-import { stationsForMode, type RouteMode } from '../business/BusinessData';
+import { STATIONS, stationsForMode, type RouteMode } from '../business/BusinessData';
 import { RouteLayer } from '../business/RouteLayer';
 import { StationLayer } from '../business/StationLayer';
 import { createDebugParams, type DebugParams } from '../debug/DebugParams';
@@ -200,7 +200,10 @@ export class SceneApp {
     this.routeLayer = new RouteLayer(terrainData);
     this.stationLayer = new StationLayer(terrainData);
     this.businessLabels = new BusinessLabelLayer(terrainData);
-    this.weatherLayer = new WeatherLayer(terrainData);
+    this.weatherLayer = new WeatherLayer(
+      STATIONS,
+      (stationId) => this.stationLayer.getStationPosition(stationId),
+    );
     this.modeToolbar = new ModeToolbar((mode) => this.setMode(mode));
     this.container.append(this.modeToolbar.element);
 
@@ -323,7 +326,12 @@ export class SceneApp {
       this.params.route,
     );
     this.stationLayer.update(deltaSeconds, this.camera, this.container.clientHeight);
-    this.weatherLayer.update(elapsedSeconds, this.params.weather);
+    this.weatherLayer.tick(
+      deltaSeconds,
+      elapsedSeconds,
+      this.camera,
+      this.container.clientHeight,
+    );
     this.adminLod.update(deltaSeconds);
 
     this.renderer.render(this.scene, this.camera);
@@ -446,9 +454,9 @@ export class SceneApp {
     this.stationLayer.setHovered(null);
     this.businessLabels.setMode(mode);
     this.businessLabels.setHovered(null);
-    this.weatherLayer.setMode(mode);
-    this.modeToolbar.setMode(mode);
     const modeStations = stationsForMode(mode);
+    this.weatherLayer.setActiveStations(modeStations.map((station) => station.id));
+    this.modeToolbar.setMode(mode);
     this.adminLod.setActiveProvinceAdcodes(modeStations.map((station) => station.provinceAdcode));
     if (focusStations) this.cameraController.focusUvPoints(modeStations);
   }

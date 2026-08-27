@@ -1,4 +1,5 @@
 import { TERRAIN_LOD_DEFAULTS } from '../terrain/TerrainLodConfig';
+import type { WeatherStyle } from '../types/weather';
 
 export interface DebugParams {
   terrain: {
@@ -96,14 +97,7 @@ export interface DebugParams {
     labelDistance: number;
     labelClusterDistance: number;
   };
-  weather: {
-    enabled: boolean;
-    intensity: number;
-    rainDensity: number;
-    windSpeed: number;
-    cloudScale: number;
-    opacity: number;
-  };
+  weather: WeatherStyle;
   metrics: {
     fps: number;
     drawCalls: number;

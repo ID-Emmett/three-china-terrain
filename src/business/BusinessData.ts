@@ -1,5 +1,7 @@
 export type RouteMode = 'comparison' | 'radial';
 
+import type { LegacyWeatherKind, StationWeather } from '../types/weather';
+
 // Keep every visual that represents a station anchored at the same height.
 // Routes use this value for their first/last points so the stroke terminates
 // at the station sprite's centre instead of hovering a few pixels away.
@@ -13,7 +15,7 @@ export interface StationDatum {
   provinceAdcode: number;
   priority: 1 | 2 | 3;
   center?: boolean;
-  weather?: 'rain' | 'wind' | 'cloud';
+  weather?: StationWeather | LegacyWeatherKind;
 }
 
 export interface RouteDatum {
@@ -26,19 +28,19 @@ export interface RouteDatum {
 }
 
 const COMPARISON_STATIONS: StationDatum[] = [
-  { id: 'yuhua', name: '雨花桃阳点部', u: 0.5752, v: 0.6158, provinceAdcode: 430000, priority: 3, weather: 'rain' },
+  { id: 'yuhua', name: '雨花桃阳点部', u: 0.5752, v: 0.6158, provinceAdcode: 430000, priority: 3, weather: { cloudCover: 0.72, precipitation: 0.82, wind: { speed: 3.2, direction: 112 } } },
   { id: 'muyun', name: '暮云桃阳二级中转场', u: 0.5787, v: 0.6111, provinceAdcode: 430000, priority: 2 },
-  { id: 'huanghua', name: '黄花中转场陆运二区', u: 0.5846, v: 0.6071, provinceAdcode: 430000, priority: 2, weather: 'wind' },
-  { id: 'xiaoshan', name: '萧山机场分拨二区', u: 0.6643, v: 0.5879, provinceAdcode: 330000, priority: 2, weather: 'cloud' },
+  { id: 'huanghua', name: '黄花中转场陆运二区', u: 0.5846, v: 0.6071, provinceAdcode: 430000, priority: 2, weather: { wind: { speed: 7.5, direction: 72 } } },
+  { id: 'xiaoshan', name: '萧山机场分拨二区', u: 0.6643, v: 0.5879, provinceAdcode: 330000, priority: 2, weather: { cloudCover: 0.88 } },
   { id: 'tonglu', name: '桐庐凤川二级中转场', u: 0.6498, v: 0.5906, provinceAdcode: 330000, priority: 2 },
   { id: 'jiande', name: '建德金溪点部', u: 0.6349, v: 0.5944, provinceAdcode: 330000, priority: 3 },
 ];
 
 const RADIAL_STATIONS: StationDatum[] = [
   { id: 'dalingshan', name: '大岭山分拨站点', u: 0.5834, v: 0.7009, provinceAdcode: 440000, priority: 3, center: true },
-  { id: 'guangzhou', name: '广州北部中转场', u: 0.5698, v: 0.6868, provinceAdcode: 440000, priority: 3, weather: 'cloud' },
-  { id: 'huizhou', name: '惠州惠城点部', u: 0.5972, v: 0.6941, provinceAdcode: 440000, priority: 3, weather: 'rain' },
-  { id: 'shenzhen', name: '深圳龙岗点部', u: 0.5912, v: 0.7082, provinceAdcode: 440000, priority: 3, weather: 'wind' },
+  { id: 'guangzhou', name: '广州北部中转场', u: 0.5698, v: 0.6868, provinceAdcode: 440000, priority: 3, weather: { cloudCover: 0.78 } },
+  { id: 'huizhou', name: '惠州惠城点部', u: 0.5972, v: 0.6941, provinceAdcode: 440000, priority: 3, weather: { cloudCover: 0.65, precipitation: 0.74, wind: { speed: 2.4, direction: 156 } } },
+  { id: 'shenzhen', name: '深圳龙岗点部', u: 0.5912, v: 0.7082, provinceAdcode: 440000, priority: 3, weather: { wind: { speed: 6.2, direction: 38 } } },
   { id: 'foshan', name: '佛山顺德点部', u: 0.5684, v: 0.7044, provinceAdcode: 440000, priority: 3 },
   { id: 'heyuan', name: '河源中转场', u: 0.6034, v: 0.6787, provinceAdcode: 440000, priority: 2 },
 ];

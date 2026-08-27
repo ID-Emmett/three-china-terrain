@@ -15,6 +15,7 @@ interface StationEntry {
   datum: StationDatum;
   sprite: THREE.Sprite;
   material: THREE.SpriteMaterial;
+  position: THREE.Vector3;
   baseOpacity: number;
   opacityTarget: number;
 }
@@ -47,6 +48,12 @@ export class StationLayer implements SceneLayer {
   public setHovered(route: RouteDatum | null): void {
     this.hoveredRoute = route;
     this.applyVisualState();
+  }
+
+  /** Returns a copy so consumers cannot mutate the station layer's anchors. */
+  public getStationPosition(id: string): THREE.Vector3 | undefined {
+    const entry = this.entries.find((candidate) => candidate.datum.id === id);
+    return entry?.position.clone();
   }
 
   public update(deltaSeconds: number, camera: THREE.PerspectiveCamera, viewportHeight: number): void {
@@ -104,6 +111,7 @@ export class StationLayer implements SceneLayer {
         datum,
         sprite,
         material,
+        position: new THREE.Vector3(),
         baseOpacity: 0.48,
         opacityTarget: 0.48,
       });
@@ -116,11 +124,12 @@ export class StationLayer implements SceneLayer {
       const height = this.terrain.sampleUv(entry.datum.u, entry.datum.v)
         * this.terrain.meta.sceneUnitsPerMeter
         * this.exaggeration;
-      entry.sprite.position.set(
+      entry.position.set(
         (entry.datum.u - 0.5) * this.terrain.meta.sceneWidth,
         height + STATION_ANCHOR_LIFT,
         (entry.datum.v - 0.5) * this.terrain.meta.sceneDepth,
       );
+      entry.sprite.position.copy(entry.position);
     }
   }
 
