@@ -20,6 +20,9 @@ const MAX_RUNTIME_BYTES = 2 * 1024 * 1024;
 const MAX_TERRAIN_TEXTURE_BYTES = 1024 * 1024;
 const MAX_STREAMED_RELIEF_BYTES = 256 * 1024 * 1024;
 const RELIEF_TILE_DIRECTORY = 'terrain-relief-tiles';
+const RELIEF_TILE_KTX2_DIRECTORY = 'terrain-relief-tiles-ktx2';
+const RELIEF_COARSE_TILE_DIRECTORY = 'terrain-relief-tiles-coarse';
+const RELIEF_COARSE_TILE_KTX2_DIRECTORY = 'terrain-relief-tiles-coarse-ktx2';
 const EXPECTED_LAND_SOURCE = 'China administrative coastline with Natural Earth surrounding context';
 
 function sameEntries(actual, expected) {
@@ -164,7 +167,12 @@ async function main() {
   const sizes = {};
   const outputEntries = await fs.readdir(OUTPUT_ROOT, { withFileTypes: true });
   const directories = outputEntries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
-  if (!sameEntries(directories, [RELIEF_TILE_DIRECTORY])) {
+  if (!sameEntries(directories, [
+    RELIEF_COARSE_TILE_DIRECTORY,
+    RELIEF_COARSE_TILE_KTX2_DIRECTORY,
+    RELIEF_TILE_DIRECTORY,
+    RELIEF_TILE_KTX2_DIRECTORY,
+  ].sort())) {
     throw new Error(`Unexpected runtime asset directories: ${directories.join(', ')}`);
   }
 
@@ -181,7 +189,7 @@ async function main() {
   }
 
   const manifest = await readJson(path.join(OUTPUT_ROOT, 'scene-manifest.json'));
-  if (manifest.version !== 15) throw new Error(`Unexpected manifest version: ${manifest.version}`);
+  if (manifest.version !== 16) throw new Error(`Unexpected manifest version: ${manifest.version}`);
   if (manifest.sources?.landMask !== EXPECTED_LAND_SOURCE
     || JSON.stringify(manifest).includes('replacement')) {
     throw new Error('Manifest does not describe the authoritative single land topology.');
@@ -228,40 +236,60 @@ async function main() {
     throw new Error('Invalid terrain relief texture asset.');
   }
   const reliefTiles = manifest.terrain.reliefTiles;
-  if (!reliefTiles
-    || reliefTiles.urlTemplate !== '/data/terrain-relief-tiles/{x}-{y}.webp'
-    || reliefTiles.width !== reliefTiles.columns * reliefTiles.tileSize
-    || reliefTiles.height !== reliefTiles.rows * reliefTiles.tileSize
-    || reliefTiles.gutter < 1
-    || reliefTiles.maxResidentTiles < 16
-    || reliefTiles.maxResidentTiles > 64
-    || reliefTiles.format !== 'rg-normal-b-light-a-residual') {
+  if (!reliefTiles || reliefTiles.gutter < 1 || reliefTiles.tileSize !== 512
+    || reliefTiles.format !== 'rg-normal-b-light-a-residual'
+    || !reliefTiles.levels?.coarse || !reliefTiles.levels?.fine) {
     throw new Error('Invalid progressive terrain relief tile metadata.');
   }
-  const reliefTileEntries = (await fs.readdir(
-    path.join(OUTPUT_ROOT, RELIEF_TILE_DIRECTORY),
-    { withFileTypes: true },
-  )).filter((entry) => entry.isFile()).map((entry) => entry.name).sort();
-  const expectedReliefTiles = [];
-  let streamedReliefBytes = 0;
   const expectedReliefTileSize = reliefTiles.tileSize + reliefTiles.gutter * 2;
-  for (let y = 0; y < reliefTiles.rows; y += 1) {
-    for (let x = 0; x < reliefTiles.columns; x += 1) {
-      const fileName = `${x}-${y}.webp`;
-      expectedReliefTiles.push(fileName);
-      const filePath = path.join(OUTPUT_ROOT, RELIEF_TILE_DIRECTORY, fileName);
-      streamedReliefBytes += (await fs.stat(filePath)).size;
-      const metadata = await sharp(filePath).metadata();
-      if (metadata.width !== expectedReliefTileSize || metadata.height !== expectedReliefTileSize) {
-        throw new Error(`Invalid relief tile dimensions: ${fileName}`);
+  let streamedReliefBytes = 0;
+  for (const [id, directory, ktx2Directory] of [
+    ['fine', RELIEF_TILE_DIRECTORY, RELIEF_TILE_KTX2_DIRECTORY],
+    ['coarse', RELIEF_COARSE_TILE_DIRECTORY, RELIEF_COARSE_TILE_KTX2_DIRECTORY],
+  ]) {
+    const level = reliefTiles.levels[id];
+    if (level.width !== level.columns * reliefTiles.tileSize
+      || level.height !== level.rows * reliefTiles.tileSize
+      || level.maxResidentTiles < 8 || level.maxResidentTiles > 64
+      || (level.fallbackResidentTiles ?? level.maxResidentTiles) < 8
+      || (level.fallbackResidentTiles ?? level.maxResidentTiles) > level.maxResidentTiles
+      || level.urlTemplate !== `/data/${directory}/{x}-{y}.webp`
+      || level.ktx2UrlTemplate !== `/data/${ktx2Directory}/{x}-{y}.ktx2`) {
+      throw new Error(`Invalid ${id} relief tile metadata.`);
+    }
+    const webpEntries = (await fs.readdir(path.join(OUTPUT_ROOT, directory), { withFileTypes: true }))
+      .filter((entry) => entry.isFile()).map((entry) => entry.name).sort();
+    const ktx2Entries = (await fs.readdir(path.join(OUTPUT_ROOT, ktx2Directory), { withFileTypes: true }))
+      .filter((entry) => entry.isFile()).map((entry) => entry.name).sort();
+    const expectedWebp = [];
+    const expectedKtx2 = [];
+    let webpBytes = 0;
+    let ktx2Bytes = 0;
+    for (let y = 0; y < level.rows; y += 1) {
+      for (let x = 0; x < level.columns; x += 1) {
+        const webpName = `${x}-${y}.webp`;
+        const ktx2Name = `${x}-${y}.ktx2`;
+        expectedWebp.push(webpName);
+        expectedKtx2.push(ktx2Name);
+        const filePath = path.join(OUTPUT_ROOT, directory, webpName);
+        webpBytes += (await fs.stat(filePath)).size;
+        const metadata = await sharp(filePath).metadata();
+        if (metadata.width !== expectedReliefTileSize || metadata.height !== expectedReliefTileSize) {
+          throw new Error(`Invalid ${id} relief tile dimensions: ${webpName}`);
+        }
+        ktx2Bytes += (await fs.stat(path.join(OUTPUT_ROOT, ktx2Directory, ktx2Name))).size;
       }
     }
+    expectedWebp.sort();
+    expectedKtx2.sort();
+    if (!sameEntries(webpEntries, expectedWebp) || !sameEntries(ktx2Entries, expectedKtx2)
+      || level.byteLength !== webpBytes || level.ktx2ByteLength !== ktx2Bytes) {
+      throw new Error(`Progressive ${id} relief tile set is incomplete.`);
+    }
+    streamedReliefBytes += webpBytes + ktx2Bytes;
   }
-  expectedReliefTiles.sort();
-  if (!sameEntries(reliefTileEntries, expectedReliefTiles)
-    || reliefTiles.byteLength !== streamedReliefBytes
-    || streamedReliefBytes > MAX_STREAMED_RELIEF_BYTES) {
-    throw new Error('Progressive terrain relief tile set is incomplete or exceeds its budget.');
+  if (streamedReliefBytes > MAX_STREAMED_RELIEF_BYTES) {
+    throw new Error('Progressive terrain relief tile set exceeds its budget.');
   }
   if (manifest.terrainImagery?.url !== '/data/terrain-imagery.jpg'
     || sizes['terrain-imagery.jpg'] < 100_000

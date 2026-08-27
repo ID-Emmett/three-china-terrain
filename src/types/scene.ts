@@ -27,16 +27,21 @@ export interface SceneManifest {
     reliefHeight: number;
     reliefResidualRangeMeters: number;
     reliefTiles: {
-      urlTemplate: string;
-      width: number;
-      height: number;
       tileSize: number;
       gutter: number;
-      columns: number;
-      rows: number;
-      maxResidentTiles: number;
-      byteLength: number;
       format: 'rg-normal-b-light-a-residual';
+      /** Deprecated fine-level aliases kept for tooling compatibility. */
+      urlTemplate?: string;
+      width?: number;
+      height?: number;
+      columns?: number;
+      rows?: number;
+      maxResidentTiles?: number;
+      byteLength?: number;
+      levels: {
+        coarse: ReliefTileLevel;
+        fine: ReliefTileLevel;
+      };
     };
   };
   terrainImagery: {
@@ -76,6 +81,19 @@ export interface SceneManifest {
     boundaryFormat: 'LGB4-uv-province';
   };
   sources: Record<string, string>;
+}
+
+export interface ReliefTileLevel {
+  urlTemplate: string;
+  ktx2UrlTemplate?: string;
+  width: number;
+  height: number;
+  columns: number;
+  rows: number;
+  maxResidentTiles: number;
+  fallbackResidentTiles?: number;
+  byteLength: number;
+  ktx2ByteLength?: number;
 }
 
 export interface AdminLabelDatum {

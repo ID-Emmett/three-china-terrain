@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import pngjs from 'pngjs';
 import sharp from 'sharp';
 import simplify from 'simplify-js';
@@ -17,6 +19,7 @@ import {
 import { ensureDirectory, exists, readJson, writeJson } from './io.mjs';
 
 const { PNG } = pngjs;
+const execFileAsync = promisify(execFile);
 const NASA_IMAGERY_FILE = path.join(CACHE_ROOT, 'nasa-blue-marble-2004-08-21600.jpg');
 const ATTRIBUTION_FILE = path.join(PROJECT_ROOT, 'tools', 'data-pipeline', 'ATTRIBUTION.md');
 const RELIEF_WIDTH = 1024;
@@ -26,7 +29,12 @@ const RELIEF_TILE_HEIGHT = 6144;
 const RELIEF_TILE_SIZE = 512;
 const RELIEF_TILE_GUTTER = 2;
 const RELIEF_TILE_DIRECTORY = 'terrain-relief-tiles';
-const RELIEF_TILE_RESIDENT_COUNT = 36;
+const RELIEF_TILE_KTX2_DIRECTORY = 'terrain-relief-tiles-ktx2';
+const RELIEF_COARSE_TILE_DIRECTORY = 'terrain-relief-tiles-coarse';
+const RELIEF_COARSE_TILE_KTX2_DIRECTORY = 'terrain-relief-tiles-coarse-ktx2';
+const RELIEF_TILE_RESIDENT_COUNT = 64;
+const RELIEF_TILE_FALLBACK_RESIDENT_COUNT = 48;
+const RELIEF_COARSE_TILE_RESIDENT_COUNT = 12;
 const IMAGERY_WIDTH = 2048;
 const IMAGERY_HEIGHT = 1536;
 const RELIEF_RESIDUAL_RANGE_METERS = 720;
@@ -941,13 +949,56 @@ function encodeTerrainNormal(output, offset, source, width, height, x, y) {
   output[offset + 1] = Math.round((clamp(-slopeZ * inverseLength, -1, 1) * 0.5 + 0.5) * 255);
 }
 
-async function buildReliefTiles(sourceHeights, width, height) {
+function downsampleHeightGrid(source, width, height, factor) {
+  const targetWidth = Math.max(1, Math.floor(width / factor));
+  const targetHeight = Math.max(1, Math.floor(height / factor));
+  const target = new Int16Array(targetWidth * targetHeight);
+  for (let y = 0; y < targetHeight; y += 1) {
+    for (let x = 0; x < targetWidth; x += 1) {
+      let sum = 0;
+      let count = 0;
+      for (let oy = 0; oy < factor; oy += 1) {
+        for (let ox = 0; ox < factor; ox += 1) {
+          const sx = Math.min(width - 1, x * factor + ox);
+          const sy = Math.min(height - 1, y * factor + oy);
+          sum += source[sy * width + sx];
+          count += 1;
+        }
+      }
+      target[y * targetWidth + x] = Math.round(sum / count);
+    }
+  }
+  return { data: target, width: targetWidth, height: targetHeight };
+}
+
+function basisuExecutablePath() {
+  return process.platform === 'win32'
+    ? path.join(PROJECT_ROOT, 'node_modules', 'basisu', 'bin', 'win', 'x64_sse', 'basisu.exe')
+    : path.join(PROJECT_ROOT, 'node_modules', 'basisu', 'bin', process.platform, 'x64', 'basisu');
+}
+
+async function encodeKtx2Tile(pngPath, outputDirectory) {
+  const basisuPath = basisuExecutablePath();
+  if (!(await exists(basisuPath))) {
+    throw new Error('KTX2 build requires the optional `basisu` package. Run `npm install` and retry.');
+  }
+  await ensureDirectory(outputDirectory);
+  await execFileAsync(basisuPath, [
+    '-ktx2', '-uastc', '-uastc_level', '2', '-linear', '-normal_map',
+    '-output_path', outputDirectory, pngPath,
+  ], { windowsHide: true });
+}
+
+async function buildReliefTiles(sourceHeights, width, height, options = {}) {
   const columns = Math.ceil(width / RELIEF_TILE_SIZE);
   const rows = Math.ceil(height / RELIEF_TILE_SIZE);
   const assetSize = RELIEF_TILE_SIZE + RELIEF_TILE_GUTTER * 2;
-  const directory = path.join(OUTPUT_ROOT, RELIEF_TILE_DIRECTORY);
+  const directory = path.join(OUTPUT_ROOT, options.directory ?? RELIEF_TILE_DIRECTORY);
+  const ktx2Directory = path.join(OUTPUT_ROOT, options.ktx2Directory ?? `${options.directory ?? RELIEF_TILE_DIRECTORY}-ktx2`);
   await ensureDirectory(directory);
+  await ensureDirectory(ktx2Directory);
   let byteLength = 0;
+  let ktx2ByteLength = 0;
 
   for (let tileY = 0; tileY < rows; tileY += 1) {
     for (let tileX = 0; tileX < columns; tileX += 1) {
@@ -983,20 +1034,29 @@ async function buildReliefTiles(sourceHeights, width, height) {
         .webp({ lossless: true, effort: 5 })
         .toFile(filePath);
       byteLength += (await fs.stat(filePath)).size;
+      const pngPath = path.join(directory, `${tileX}-${tileY}.png`);
+      await sharp(output, { raw: { width: assetSize, height: assetSize, channels: 4 } }).png().toFile(pngPath);
+      await encodeKtx2Tile(pngPath, ktx2Directory);
+      await fs.rm(pngPath, { force: true });
+      const ktx2Path = path.join(ktx2Directory, `${tileX}-${tileY}.ktx2`);
+      ktx2ByteLength += (await fs.stat(ktx2Path)).size;
     }
     console.log(`Baked relief tile row ${tileY + 1}/${rows}.`);
   }
 
   return {
-    urlTemplate: `/data/${RELIEF_TILE_DIRECTORY}/{x}-{y}.webp`,
+    urlTemplate: `/data/${options.directory ?? RELIEF_TILE_DIRECTORY}/{x}-{y}.webp`,
+    ktx2UrlTemplate: `/data/${options.ktx2Directory ?? `${options.directory ?? RELIEF_TILE_DIRECTORY}-ktx2`}/{x}-{y}.ktx2`,
     width,
     height,
     tileSize: RELIEF_TILE_SIZE,
     gutter: RELIEF_TILE_GUTTER,
     columns,
     rows,
-    maxResidentTiles: RELIEF_TILE_RESIDENT_COUNT,
+    maxResidentTiles: options.maxResidentTiles ?? RELIEF_TILE_RESIDENT_COUNT,
+    fallbackResidentTiles: options.fallbackResidentTiles ?? options.maxResidentTiles ?? RELIEF_TILE_RESIDENT_COUNT,
     byteLength,
+    ktx2ByteLength,
     format: 'rg-normal-b-light-a-residual',
   };
 }
@@ -1094,6 +1154,9 @@ async function fileSize(fileName) {
 
 async function main() {
   await validateBuildInputs();
+  if (!(await exists(basisuExecutablePath()))) {
+    throw new Error('KTX2 build requires the optional `basisu` package. Run `npm install` and retry.');
+  }
   await fs.rm(OUTPUT_ROOT, { recursive: true, force: true });
   await ensureDirectory(OUTPUT_ROOT);
   await fs.copyFile(ATTRIBUTION_FILE, path.join(OUTPUT_ROOT, 'ATTRIBUTION.md'));
@@ -1131,6 +1194,24 @@ async function main() {
     tiledReliefHeights,
     RELIEF_TILE_WIDTH,
     RELIEF_TILE_HEIGHT,
+    {
+      directory: RELIEF_TILE_DIRECTORY,
+      ktx2Directory: RELIEF_TILE_KTX2_DIRECTORY,
+      maxResidentTiles: RELIEF_TILE_RESIDENT_COUNT,
+      fallbackResidentTiles: RELIEF_TILE_FALLBACK_RESIDENT_COUNT,
+    },
+  );
+  const coarseGrid = downsampleHeightGrid(tiledReliefHeights, RELIEF_TILE_WIDTH, RELIEF_TILE_HEIGHT, 4);
+  console.log('Baking coarse terrain relief tiles...');
+  const coarseReliefTiles = await buildReliefTiles(
+    coarseGrid.data,
+    coarseGrid.width,
+    coarseGrid.height,
+    {
+      directory: RELIEF_COARSE_TILE_DIRECTORY,
+      ktx2Directory: RELIEF_COARSE_TILE_KTX2_DIRECTORY,
+      maxResidentTiles: RELIEF_COARSE_TILE_RESIDENT_COUNT,
+    },
   );
   console.log('Reprojecting NASA Blue Marble terrain imagery...');
   const terrainImagery = await buildTerrainImagery();
@@ -1165,7 +1246,7 @@ async function main() {
   const sizes = Object.fromEntries(await Promise.all(files.map(async (file) => [file, await fileSize(file)])));
 
   await writeJson(path.join(OUTPUT_ROOT, 'scene-manifest.json'), {
-    version: 15,
+    version: 16,
     generatedAt: new Date().toISOString(),
     region: REGION,
     terrain: {
@@ -1175,7 +1256,16 @@ async function main() {
       reliefWidth,
       reliefHeight,
       reliefResidualRangeMeters: RELIEF_RESIDUAL_RANGE_METERS,
-      reliefTiles,
+      reliefTiles: {
+        ...reliefTiles,
+        tileSize: RELIEF_TILE_SIZE,
+        gutter: RELIEF_TILE_GUTTER,
+        format: 'rg-normal-b-light-a-residual',
+        levels: {
+          coarse: coarseReliefTiles,
+          fine: reliefTiles,
+        },
+      },
       ...terrainMeta,
     },
     terrainImagery: {

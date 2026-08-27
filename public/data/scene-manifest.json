@@ -1,6 +1,6 @@
 {
-  "version": 15,
-  "generatedAt": "2026-08-26T08:26:25.735Z",
+  "version": 16,
+  "generatedAt": "2026-08-26T13:16:56.467Z",
   "region": {
     "west": 70,
     "east": 145,
@@ -23,15 +23,50 @@
     "reliefResidualRangeMeters": 720,
     "reliefTiles": {
       "urlTemplate": "/data/terrain-relief-tiles/{x}-{y}.webp",
+      "ktx2UrlTemplate": "/data/terrain-relief-tiles-ktx2/{x}-{y}.ktx2",
       "width": 8192,
       "height": 6144,
       "tileSize": 512,
       "gutter": 2,
       "columns": 16,
       "rows": 12,
-      "maxResidentTiles": 36,
+      "maxResidentTiles": 64,
+      "fallbackResidentTiles": 48,
       "byteLength": 57771114,
-      "format": "rg-normal-b-light-a-residual"
+      "ktx2ByteLength": 27841098,
+      "format": "rg-normal-b-light-a-residual",
+      "levels": {
+        "coarse": {
+          "urlTemplate": "/data/terrain-relief-tiles-coarse/{x}-{y}.webp",
+          "ktx2UrlTemplate": "/data/terrain-relief-tiles-coarse-ktx2/{x}-{y}.ktx2",
+          "width": 2048,
+          "height": 1536,
+          "tileSize": 512,
+          "gutter": 2,
+          "columns": 4,
+          "rows": 3,
+          "maxResidentTiles": 12,
+          "fallbackResidentTiles": 12,
+          "byteLength": 4033110,
+          "ktx2ByteLength": 1912316,
+          "format": "rg-normal-b-light-a-residual"
+        },
+        "fine": {
+          "urlTemplate": "/data/terrain-relief-tiles/{x}-{y}.webp",
+          "ktx2UrlTemplate": "/data/terrain-relief-tiles-ktx2/{x}-{y}.ktx2",
+          "width": 8192,
+          "height": 6144,
+          "tileSize": 512,
+          "gutter": 2,
+          "columns": 16,
+          "rows": 12,
+          "maxResidentTiles": 64,
+          "fallbackResidentTiles": 48,
+          "byteLength": 57771114,
+          "ktx2ByteLength": 27841098,
+          "format": "rg-normal-b-light-a-residual"
+        }
+      }
     },
     "width": 512,
     "height": 384,

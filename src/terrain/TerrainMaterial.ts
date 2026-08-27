@@ -65,19 +65,38 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
     const materialMip = smoothstep(68, 260, distance).mul(3);
     const surfaceField = texture(surfaceTexture, mapUv).level(materialMip);
     const reliefField = texture(reliefTexture, mapUv).level(materialMip.mul(0.72));
-    const page = texture(reliefTiles.pages, mapUv).level(float(0));
-    const pageTexel = vec2(1 / reliefTiles.columns, 1 / reliefTiles.rows);
-    const pageLeft = texture(reliefTiles.pages, mapUv.sub(vec2(pageTexel.x, 0))).level(float(0));
-    const pageRight = texture(reliefTiles.pages, mapUv.add(vec2(pageTexel.x, 0))).level(float(0));
-    const pageDown = texture(reliefTiles.pages, mapUv.sub(vec2(0, pageTexel.y))).level(float(0));
-    const pageUp = texture(reliefTiles.pages, mapUv.add(vec2(0, pageTexel.y))).level(float(0));
-    const assetSize = reliefTiles.tileSize + reliefTiles.gutter * 2;
-    const tileCoordinates = mapUv.mul(vec2(reliefTiles.columns, reliefTiles.rows));
-    const tileUv = fract(tileCoordinates)
-      .mul(reliefTiles.tileSize / assetSize)
-      .add(reliefTiles.gutter / assetSize);
-    const tileLayer = int(page.r.mul(255).add(0.5));
-    const reliefTile = texture(reliefTiles.tiles, tileUv).depth(tileLayer);
+    const assetSize = reliefTiles.fine.tileSize + reliefTiles.fine.gutter * 2;
+    const sampleTileLevel = (level: typeof reliefTiles.fine) => {
+      const page = texture(level.pages, mapUv).level(float(0));
+      const pageTexel = vec2(1 / level.columns, 1 / level.rows);
+      const pageLeft = texture(level.pages, mapUv.sub(vec2(pageTexel.x, 0))).level(float(0));
+      const pageRight = texture(level.pages, mapUv.add(vec2(pageTexel.x, 0))).level(float(0));
+      const pageDown = texture(level.pages, mapUv.sub(vec2(0, pageTexel.y))).level(float(0));
+      const pageUp = texture(level.pages, mapUv.add(vec2(0, pageTexel.y))).level(float(0));
+      const tileCoordinates = mapUv.mul(vec2(level.columns, level.rows));
+      const localTileUv = fract(tileCoordinates);
+      // WebP pixels are flipped in the decode worker before upload. GPU block
+      // compression cannot be flipped during upload, so KTX2 needs the same
+      // orientation correction in sampling space.
+      const orientedTileUv = level.compressed
+        ? vec2(localTileUv.x, float(1).sub(localTileUv.y))
+        : localTileUv;
+      const tileUv = orientedTileUv
+        .mul(level.tileSize / assetSize)
+        .add(level.gutter / assetSize);
+      const tileLayer = int(page.r.mul(255).add(0.5));
+      const tile = texture(level.tiles, tileUv).depth(tileLayer);
+      // Wider fallback feathering hides the coarse/fine page boundary while a
+      // neighboring fine tile is still being fetched or has been evicted.
+      const tileEdgeWidth = float(0.16);
+      const leftEdge = mix(smoothstep(0, tileEdgeWidth, fract(tileCoordinates.x)), float(1), pageLeft.g);
+      const rightEdge = mix(smoothstep(0, tileEdgeWidth, float(1).sub(fract(tileCoordinates.x))), float(1), pageRight.g);
+      const downEdge = mix(smoothstep(0, tileEdgeWidth, fract(tileCoordinates.y)), float(1), pageDown.g);
+      const upEdge = mix(smoothstep(0, tileEdgeWidth, float(1).sub(fract(tileCoordinates.y))), float(1), pageUp.g);
+      return { page, tile, fade: page.g.mul(leftEdge).mul(rightEdge).mul(downEdge).mul(upEdge) };
+    };
+    const coarseSample = sampleTileLevel(reliefTiles.coarse);
+    const fineSample = sampleTileLevel(reliefTiles.fine);
     const detailUv = vec2(
       mapUv.x.mul(17.3).add(mapUv.y.mul(5.1)),
       mapUv.y.mul(19.1).sub(mapUv.x.mul(4.3)),
@@ -120,33 +139,22 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
     const detailLod = float(1).sub(
       smoothstep(detailDistance.mul(0.34), detailDistance, distance),
     );
-    const tileEdgeWidth = float(0.06);
-    const leftEdge = mix(
-      smoothstep(0, tileEdgeWidth, fract(tileCoordinates.x)),
-      float(1),
-      pageLeft.g,
-    );
-    const rightEdge = mix(
-      smoothstep(0, tileEdgeWidth, float(1).sub(fract(tileCoordinates.x))),
-      float(1),
-      pageRight.g,
-    );
-    const downEdge = mix(
-      smoothstep(0, tileEdgeWidth, fract(tileCoordinates.y)),
-      float(1),
-      pageDown.g,
-    );
-    const upEdge = mix(
-      smoothstep(0, tileEdgeWidth, float(1).sub(fract(tileCoordinates.y))),
-      float(1),
-      pageUp.g,
-    );
-    const tileFade = page.g.mul(leftEdge).mul(rightEdge).mul(downEdge).mul(upEdge);
-    const residentDetail = tileFade.mul(detailLod);
+    // The tile cache already performs view-aware LOD selection. Applying a
+    // second per-fragment distance cutoff here creates a screen-sized band when
+    // a shallow camera angle puts the far half of the same tile beyond the
+    // threshold. A resident tile should therefore stay active across its full
+    // footprint; missing pages still fall back through the base relief field.
+    const coarseFade = coarseSample.fade;
+    const fineFade = fineSample.fade;
     const heightResidual = mix(
       reliefField.r.mul(2).sub(1),
-      reliefTile.a.mul(2).sub(1),
-      residentDetail,
+      coarseSample.tile.a.mul(2).sub(1),
+      coarseFade,
+    );
+    const heightResidualFine = mix(
+      heightResidual,
+      fineSample.tile.a.mul(2).sub(1),
+      fineFade,
     );
 
     const detailedNormalXZ = surfaceField.ba.mul(2).sub(1);
@@ -156,13 +164,17 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
       detailedNormalY,
       detailedNormalXZ.y,
     ).normalize();
-    const tileNormalXZ = reliefTile.rg.mul(2).sub(1);
+    const tileNormalXZ = fineSample.tile.rg.mul(2).sub(1);
     const tileNormalY = sqrt(float(1).sub(dot(tileNormalXZ, tileNormalXZ)).max(0));
     const tileNormalLocal = vec3(tileNormalXZ.x, tileNormalY, tileNormalXZ.y).normalize();
-    const residentNormalLocal = mix(detailedNormalLocal, tileNormalLocal, residentDetail).normalize();
+    const coarseNormalXZ = coarseSample.tile.rg.mul(2).sub(1);
+    const coarseNormalY = sqrt(float(1).sub(dot(coarseNormalXZ, coarseNormalXZ)).max(0));
+    const coarseNormalLocal = vec3(coarseNormalXZ.x, coarseNormalY, coarseNormalXZ.y).normalize();
+    const residentNormalLocal = mix(detailedNormalLocal, coarseNormalLocal, coarseFade);
+    const fineNormalLocal = mix(residentNormalLocal, tileNormalLocal, fineFade).normalize();
     const terrainNormalLocal = mix(
       vec3(0, 1, 0),
-      residentNormalLocal,
+      fineNormalLocal,
       float(0.88).add(detailLod.mul(0.12)),
     ).normalize();
     const terrainNormalView = transformNormalToView(terrainNormalLocal);
@@ -218,7 +230,8 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
     // triple-lit by broad, medium and fine channels.
     let reliefLight = mix(broadLight, mediumLight, materialLod.mul(0.82));
     reliefLight = mix(reliefLight, fineLight, detailLod.mul(0.72));
-    reliefLight = mix(reliefLight, reliefTile.b.mul(2).sub(1), residentDetail.mul(0.92));
+    reliefLight = mix(reliefLight, coarseSample.tile.b.mul(2).sub(1), coarseFade.mul(0.92));
+    reliefLight = mix(reliefLight, fineSample.tile.b.mul(2).sub(1), fineFade.mul(0.92));
     // Relief channels reveal terrain below the geometry resolution. A biased
     // response preserves fill light on the shaded face while keeping the
     // sun-facing ridge edge crisp, matching aerial terrain photography.
@@ -246,11 +259,11 @@ export class TerrainMaterial extends THREE.MeshStandardNodeMaterial {
       valleyFill.mul(0.28),
     );
 
-    const ridgeMask = smoothstep(0.08, 0.62, heightResidual)
+    const ridgeMask = smoothstep(0.08, 0.62, heightResidualFine)
       .mul(materialLod)
       .mul(detailStrength)
       .clamp(0, 0.46);
-    const valleyMask = smoothstep(0.10, 0.64, heightResidual.negate())
+    const valleyMask = smoothstep(0.10, 0.64, heightResidualFine.negate())
       .mul(materialLod)
       .mul(detailStrength)
       .clamp(0, 0.38);

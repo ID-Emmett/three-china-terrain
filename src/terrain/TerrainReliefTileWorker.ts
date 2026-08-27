@@ -3,18 +3,32 @@
 import type {
   TerrainReliefTileRequest,
   TerrainReliefTileResponse,
+  TerrainReliefTileWorkerMessage,
 } from './TerrainReliefTileWorkerProtocol';
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
+const controllers = new Map<number, AbortController>();
 
-scope.onmessage = (event: MessageEvent<TerrainReliefTileRequest>): void => {
-  void decodeTile(event.data);
+scope.onmessage = (event: MessageEvent<TerrainReliefTileWorkerMessage>): void => {
+  if (event.data.type === 'cancel') {
+    controllers.get(event.data.id)?.abort();
+    return;
+  }
+  const controller = new AbortController();
+  controllers.set(event.data.id, controller);
+  void decodeTile(event.data, controller.signal).finally(() => controllers.delete(event.data.id));
 };
 
-async function decodeTile(request: TerrainReliefTileRequest): Promise<void> {
+async function decodeTile(request: TerrainReliefTileRequest, signal: AbortSignal): Promise<void> {
   try {
-    const response = await fetch(request.url, { cache: 'force-cache' });
+    const response = await fetch(request.url, { cache: 'force-cache', signal });
     if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    if (request.format === 'ktx2') {
+      const encoded = await response.arrayBuffer();
+      const message: TerrainReliefTileResponse = { id: request.id, encoded };
+      scope.postMessage(message, [encoded]);
+      return;
+    }
     const bitmap = await createImageBitmap(await response.blob(), {
       colorSpaceConversion: 'none',
       premultiplyAlpha: 'none',
@@ -36,15 +50,17 @@ async function decodeTile(request: TerrainReliefTileRequest): Promise<void> {
     const pixels = new Uint8Array(source.length);
     const stride = canvas.width * 4;
     for (let sourceY = 0; sourceY < canvas.height; sourceY += 1) {
+      if (signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
       const targetY = canvas.height - sourceY - 1;
       pixels.set(source.subarray(sourceY * stride, (sourceY + 1) * stride), targetY * stride);
     }
     const message: TerrainReliefTileResponse = { id: request.id, pixels: pixels.buffer };
     scope.postMessage(message, [pixels.buffer]);
   } catch (error) {
+    const aborted = signal.aborted || (error instanceof DOMException && error.name === 'AbortError');
     const message: TerrainReliefTileResponse = {
       id: request.id,
-      error: error instanceof Error ? error.message : String(error),
+      error: aborted ? 'aborted' : error instanceof Error ? error.message : String(error),
     };
     scope.postMessage(message);
   }

@@ -154,7 +154,8 @@ export class SceneApp {
     this.terrainReliefTexture.magFilter = THREE.LinearFilter;
     this.terrainReliefTexture.generateMipmaps = true;
     this.terrainReliefTexture.needsUpdate = true;
-    this.terrainReliefTiles = new TerrainReliefTileCache(this.assets.manifest);
+    this.terrainReliefTiles = new TerrainReliefTileCache(this.assets.manifest, this.renderer);
+    await this.terrainReliefTiles.initialize();
     this.terrainSurfaceBuilder = new TerrainSurfaceBuilder(this.assets.manifest, this.assets.heights);
     const terrainPrepareStartedAt = performance.now();
     const renderHeightResult = await this.terrainSurfaceBuilder.getRenderHeights();
