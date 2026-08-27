@@ -57,10 +57,11 @@ export class AdminLodController {
     this.cityFade = damp(this.cityFade, zoomTarget, delta, fadeDuration);
     this.currentLod = this.cityFade > 0.52 ? 'city' : 'country';
 
+    const showActiveCityBoundaries = this.settings.showCity && this.activeProvinceAdcodes.size > 0;
     this.boundaries.setLevelVisible('province', this.settings.showProvince);
-    this.boundaries.setLevelVisible('city', this.settings.showCity);
+    this.boundaries.setLevelVisible('city', showActiveCityBoundaries);
     this.boundaries.setLodOpacity('province', this.settings.showProvince ? 1 : 0);
-    this.boundaries.setLodOpacity('city', this.settings.showCity ? this.cityFade : 0);
+    this.boundaries.setLodOpacity('city', showActiveCityBoundaries ? 1 : 0);
 
     this.labels.setLevelVisible('province', this.settings.showProvinceLabels);
     this.labels.setLevelVisible('city', this.settings.showCityLabels);

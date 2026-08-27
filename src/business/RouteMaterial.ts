@@ -71,7 +71,7 @@ export class RouteMaterial extends THREE.Line2NodeMaterial {
 
     if (this.layer === 'halo') {
       this.opacityUniform.value = options.opacity
-        * (0.14 + THREE.MathUtils.clamp(options.glowStrength, 0, 2) * 0.16);
+        * (0.14 + THREE.MathUtils.clamp(options.glowStrength, 0, 5) * 0.16);
       this.linewidth = options.width + Math.max(4, options.glowRange);
     } else if (this.layer === 'pulse') {
       this.opacityUniform.value = Math.min(1, options.opacity * 0.98);
@@ -102,13 +102,13 @@ export class RouteMaterial extends THREE.Line2NodeMaterial {
       response,
     );
 
-    const safeDash = Math.max(0.04, dashLength);
-    const safeGap = Math.max(0.04, gapLength);
+    const safeDash = Math.max(0.01, dashLength);
+    const safeGap = Math.max(0.01, gapLength);
     const period = safeDash + safeGap;
     if (this.layer === 'pulse') {
       const pulseLength = THREE.MathUtils.clamp(safeDash * 0.24, 0.055, period * 0.34);
       this.dashSizeUniform.value = pulseLength;
-      this.gapSizeUniform.value = Math.max(0.04, period - pulseLength);
+      this.gapSizeUniform.value = Math.max(0.01, period - pulseLength);
     } else {
       this.dashSizeUniform.value = safeDash;
       this.gapSizeUniform.value = safeGap;

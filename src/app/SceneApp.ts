@@ -610,18 +610,18 @@ export class SceneApp {
     route.addColor(routeColors, 'routeA').name('路线 A').onChange((value) => { this.params.route.routeAColor = `#${value.getHexString()}`; this.applyBusinessParams(); });
     route.addColor(routeColors, 'routeB').name('路线 B').onChange((value) => { this.params.route.routeBColor = `#${value.getHexString()}`; this.applyBusinessParams(); });
     route.addColor(routeColors, 'hover').name('Hover 强调色').onChange((value) => { this.params.route.hoverColor = `#${value.getHexString()}`; this.routeLayer.setStyle(this.params.route); });
-    route.add(this.params.route, 'pixelWidth', 0.8, 7, 0.1).name('虚线主体宽度').onChange(() => this.routeLayer.setStyle(this.params.route));
-    route.add(this.params.route, 'dashLength', 0.1, 2.5, 0.01).name('虚线段长度（场景单位）').onChange(() => this.routeLayer.setStyle(this.params.route));
-    route.add(this.params.route, 'dashGap', 0.05, 2, 0.01).name('虚线间隔（场景单位）').onChange(() => this.routeLayer.setStyle(this.params.route));
+    route.add(this.params.route, 'pixelWidth', 0.5, 16, 0.1).name('虚线主体宽度').onChange(() => this.routeLayer.setStyle(this.params.route));
+    route.add(this.params.route, 'dashLength', 0.02, 5, 0.01).name('虚线段长度（场景单位）').onChange(() => this.routeLayer.setStyle(this.params.route));
+    route.add(this.params.route, 'dashGap', 0.02, 5, 0.01).name('虚线间隔（场景单位）').onChange(() => this.routeLayer.setStyle(this.params.route));
     route.add(this.params.route, 'dashRoundness', 0, 1, 0.01).name('虚线圆角').onChange(() => this.routeLayer.setStyle(this.params.route));
-    route.add(this.params.route, 'glowRange', 0, 18, 0.1).name('发光范围').onChange(() => this.routeLayer.setStyle(this.params.route));
-    route.add(this.params.route, 'glowIntensity', 0, 2, 0.01).name('发光强度').onChange(() => this.routeLayer.setStyle(this.params.route));
+    route.add(this.params.route, 'glowRange', 0, 40, 0.1).name('发光范围').onChange(() => this.routeLayer.setStyle(this.params.route));
+    route.add(this.params.route, 'glowIntensity', 0, 5, 0.01).name('发光强度').onChange(() => this.routeLayer.setStyle(this.params.route));
     route.add(this.params.route, 'opacity', 0, 1, 0.01).name('路线透明度').onChange(() => this.routeLayer.setStyle(this.params.route));
-    route.add(this.params.route, 'flowSpeed', 0, 3, 0.01).name('流动速度');
+    route.add(this.params.route, 'flowSpeed', 0, 8, 0.01).name('流动速度');
     route.add(this.params.route, 'flowDirection', { '正向': -1, '反向': 1 }).name('流动方向');
-    route.add(this.params.route, 'flowLength', 0.2, 3, 0.05).name('流光长度');
-    route.add(this.params.route, 'liftHeight', 0.01, 0.6, 0.01).name('贴地抬升高度').onChange(() => this.routeLayer.setStyle(this.params.route));
-    route.add(this.params.route, 'arcHeight', 0, 3, 0.05).name('发散飞线弧高').onChange(() => this.routeLayer.setStyle(this.params.route));
+    route.add(this.params.route, 'flowLength', 0.05, 6, 0.05).name('流光长度');
+    route.add(this.params.route, 'liftHeight', 0, 2, 0.01).name('贴地抬升高度').onChange(() => this.routeLayer.setStyle(this.params.route));
+    route.add(this.params.route, 'arcHeight', 0, 8, 0.05).name('发散飞线弧高').onChange(() => this.routeLayer.setStyle(this.params.route));
 
     const station = root.addFolder('站点和标签');
     station.add(this.params.station, 'pixelSize', 5, 34, 1).name('站点屏幕像素尺寸').onChange(() => this.applyBusinessParams());
