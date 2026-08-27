@@ -170,7 +170,7 @@ export function createDebugParams(): DebugParams {
       provinceLabelOpacity: 0.9,
       cityLabelOpacity: 0.72,
       provinceOpacity: 0.38,
-      cityOpacity: 0.3,
+      cityOpacity: 0.38,
       provinceWidth: 1.1,
       cityWidth: 0.75,
       provinceLabelSize: 12,
