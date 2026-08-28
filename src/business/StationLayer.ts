@@ -56,6 +56,31 @@ export class StationLayer implements SceneLayer {
     return entry?.position.clone();
   }
 
+  public pick(
+    clientX: number,
+    clientY: number,
+    camera: THREE.Camera,
+    canvas: HTMLCanvasElement,
+  ): StationDatum | null {
+    const rect = canvas.getBoundingClientRect();
+    const cursorX = clientX - rect.left;
+    const cursorY = clientY - rect.top;
+    const projected = new THREE.Vector3();
+    let closest: { datum: StationDatum; distance: number } | null = null;
+    for (const entry of this.entries) {
+      if (!entry.sprite.visible) continue;
+      projected.copy(entry.position).project(camera);
+      if (projected.z <= -1 || projected.z >= 1) continue;
+      const screenX = (projected.x * 0.5 + 0.5) * rect.width;
+      const screenY = (-projected.y * 0.5 + 0.5) * rect.height;
+      const distance = Math.hypot(cursorX - screenX, cursorY - screenY);
+      if (distance <= 24 && (!closest || distance < closest.distance)) {
+        closest = { datum: entry.datum, distance };
+      }
+    }
+    return closest?.datum ?? null;
+  }
+
   public update(deltaSeconds: number, camera: THREE.PerspectiveCamera, viewportHeight: number): void {
     const response = 1 - Math.exp(-Math.min(deltaSeconds, 0.1) * 9);
     for (const entry of this.entries) {

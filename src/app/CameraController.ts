@@ -7,6 +7,15 @@ interface UvPoint {
   v: number;
 }
 
+interface FocusAnimation {
+  fromPosition: THREE.Vector3;
+  fromTarget: THREE.Vector3;
+  toPosition: THREE.Vector3;
+  toTarget: THREE.Vector3;
+  elapsed: number;
+  duration: number;
+}
+
 export class CameraController {
   public readonly controls: OrbitControls;
   private readonly homePosition = new THREE.Vector3();
@@ -17,7 +26,11 @@ export class CameraController {
   private readonly clampedTarget = new THREE.Vector3();
   private readonly panDelta = new THREE.Vector3();
   private readonly focusOffset = new THREE.Vector3(0, 0.72, 0.69).normalize();
+  private focusAnimation?: FocusAnimation;
   private exaggeration = 1;
+  private readonly onControlStart = (): void => {
+    this.focusAnimation = undefined;
+  };
 
   public constructor(
     public readonly camera: THREE.PerspectiveCamera,
@@ -26,6 +39,7 @@ export class CameraController {
   ) {
     const meta = terrain.meta;
     this.controls = new OrbitControls(camera, domElement);
+    this.controls.addEventListener('start', this.onControlStart);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.075;
     this.controls.enablePan = true;
@@ -50,6 +64,7 @@ export class CameraController {
   }
 
   public reset(): void {
+    this.focusAnimation = undefined;
     this.camera.position.copy(this.homePosition);
     this.controls.target.copy(this.homeTarget);
     this.controls.update();
@@ -75,6 +90,7 @@ export class CameraController {
   }
 
   public focusUvPoints(points: readonly UvPoint[]): void {
+    this.focusAnimation = undefined;
     if (points.length === 0) return;
     let minU = Number.POSITIVE_INFINITY;
     let maxU = Number.NEGATIVE_INFINITY;
@@ -113,14 +129,66 @@ export class CameraController {
     this.controls.update();
   }
 
-  public update(): boolean {
+  /** Smoothly flies to a world-space point set while keeping the whole subject in frame. */
+  public flyToWorldPoints(points: readonly THREE.Vector3[], duration = 0.9): void {
+    if (points.length === 0) return;
+    const bounds = new THREE.Box3();
+    for (const point of points) bounds.expandByPoint(point);
+    const center = bounds.getCenter(new THREE.Vector3());
+    const spanX = Math.max(1.8, bounds.max.x - bounds.min.x);
+    const spanZ = Math.max(1.8, bounds.max.z - bounds.min.z);
+    const verticalFov = THREE.MathUtils.degToRad(this.camera.fov);
+    const horizontalFov = 2 * Math.atan(Math.tan(verticalFov * 0.5) * this.camera.aspect);
+    const widthDistance = (spanX * 0.7) / Math.max(0.1, Math.tan(horizontalFov * 0.5));
+    const depthDistance = (spanZ * 0.82) / Math.max(0.1, Math.tan(verticalFov * 0.5));
+    const distance = THREE.MathUtils.clamp(
+      Math.max(widthDistance, depthDistance) * 1.08 + 2.2,
+      7,
+      54,
+    );
+    center.y = Math.max(bounds.min.y, Math.min(bounds.max.y, center.y)) + 0.12;
+    this.flyTo(center, distance, duration);
+  }
+
+  /** Smoothly flies to a station anchor at a close inspection distance. */
+  public flyToWorldPoint(point: THREE.Vector3, distance = 8.5, duration = 0.8): void {
+    const target = point.clone();
+    target.y += 0.16;
+    this.flyTo(target, THREE.MathUtils.clamp(distance, this.controls.minDistance, 18), duration);
+  }
+
+  private flyTo(target: THREE.Vector3, distance: number, duration: number): void {
+    const toTarget = target.clone();
+    const toPosition = target.clone().addScaledVector(this.focusOffset, distance);
+    this.focusAnimation = {
+      fromPosition: this.camera.position.clone(),
+      fromTarget: this.controls.target.clone(),
+      toPosition,
+      toTarget,
+      elapsed: 0,
+      duration: Math.max(0.2, duration),
+    };
+  }
+
+  public update(deltaSeconds = 1 / 60): boolean {
     const changed = this.controls.update();
+    if (this.focusAnimation) {
+      const animation = this.focusAnimation;
+      animation.elapsed += Math.min(deltaSeconds, 0.1);
+      const progress = THREE.MathUtils.clamp(animation.elapsed / animation.duration, 0, 1);
+      const eased = THREE.MathUtils.smoothstep(progress, 0, 1);
+      this.camera.position.lerpVectors(animation.fromPosition, animation.toPosition, eased);
+      this.controls.target.lerpVectors(animation.fromTarget, animation.toTarget, eased);
+      this.controls.update();
+      if (progress >= 1) this.focusAnimation = undefined;
+    }
     this.clampTargetToMap();
     this.keepCameraAboveTerrain();
-    return changed;
+    return changed || this.focusAnimation !== undefined;
   }
 
   public dispose(): void {
+    this.controls.removeEventListener('start', this.onControlStart);
     this.controls.dispose();
   }
 

@@ -148,7 +148,7 @@ export function createDebugParams(): DebugParams {
       shallowColor: '#17434a',
       shelfColor: '#0c2733',
       deepColor: '#06141d',
-      shallowRange: 0.16,
+      shallowRange: 0.06,
       coastWidth: 0.055,
       waveSpeed: 0.42,
       waveStrength: 0.62,

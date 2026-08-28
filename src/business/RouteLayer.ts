@@ -141,6 +141,12 @@ export class RouteLayer implements SceneLayer {
     return closest?.entry.datum ?? null;
   }
 
+  /** Returns a detached copy of the rendered points for camera framing. */
+  public getRoutePoints(routeId: string): THREE.Vector3[] {
+    const entry = this.entries.find((candidate) => candidate.datum.id === routeId);
+    return entry?.points.map((point) => point.clone()) ?? [];
+  }
+
   public setHovered(id: string | null): void {
     this.hoveredId = id;
   }

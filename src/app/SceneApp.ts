@@ -59,6 +59,46 @@ export class SceneApp {
       this.renderer.domElement.style.cursor = route ? 'pointer' : 'grab';
     });
   };
+  private readonly onPointerDown = (event: PointerEvent): void => {
+    this.pointerDownPosition = { x: event.clientX, y: event.clientY };
+    this.suppressCanvasClick = false;
+  };
+  private readonly onPointerUp = (event: PointerEvent): void => {
+    const start = this.pointerDownPosition;
+    if (!start) return;
+    this.suppressCanvasClick = Math.hypot(event.clientX - start.x, event.clientY - start.y) > 6;
+    this.pointerDownPosition = undefined;
+  };
+  private readonly onCanvasClick = (event: MouseEvent): void => {
+    if (this.disposed || !this.cameraController) return;
+    if (this.suppressCanvasClick) {
+      this.suppressCanvasClick = false;
+      return;
+    }
+
+    // Station markers sit on route endpoints, so give them click priority.
+    const station = this.stationLayer.pick(
+      event.clientX,
+      event.clientY,
+      this.camera,
+      this.renderer.domElement,
+    );
+    if (station) {
+      const position = this.stationLayer.getStationPosition(station.id);
+      if (position) this.cameraController.flyToWorldPoint(position);
+      return;
+    }
+
+    const route = this.routeLayer.pick(
+      event.clientX,
+      event.clientY,
+      this.camera,
+      this.renderer.domElement,
+    );
+    if (!route) return;
+    const points = this.routeLayer.getRoutePoints(route.id);
+    this.cameraController.flyToWorldPoints(points);
+  };
 
   private assets!: SceneAssets;
   private cameraController!: CameraController;
@@ -88,6 +128,8 @@ export class SceneApp {
   private currentMode: RouteMode = 'comparison';
   private pointerPickFrame = 0;
   private pendingPointer?: { x: number; y: number };
+  private pointerDownPosition?: { x: number; y: number };
+  private suppressCanvasClick = false;
   private deferredAdminHandle?: number;
   private resizeQueued = false;
   private resizeInProgress = false;
@@ -253,6 +295,9 @@ export class SceneApp {
     window.addEventListener('resize', this.onResize);
     document.addEventListener('visibilitychange', this.onVisibilityChange);
     this.renderer.domElement.addEventListener('pointermove', this.onPointerMove);
+    this.renderer.domElement.addEventListener('pointerdown', this.onPointerDown);
+    this.renderer.domElement.addEventListener('pointerup', this.onPointerUp);
+    this.renderer.domElement.addEventListener('click', this.onCanvasClick);
     document.querySelector('#loading')?.classList.add('is-hidden');
     this.renderLoop.start();
     this.scheduleDeferredAdminLoad();
@@ -264,6 +309,9 @@ export class SceneApp {
     window.removeEventListener('resize', this.onResize);
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
     this.renderer.domElement.removeEventListener('pointermove', this.onPointerMove);
+    this.renderer.domElement.removeEventListener('pointerdown', this.onPointerDown);
+    this.renderer.domElement.removeEventListener('pointerup', this.onPointerUp);
+    this.renderer.domElement.removeEventListener('click', this.onCanvasClick);
     if (this.pointerPickFrame !== 0) window.cancelAnimationFrame(this.pointerPickFrame);
     if (this.deferredAdminHandle !== undefined) {
       window.clearTimeout(this.deferredAdminHandle);
@@ -306,7 +354,7 @@ export class SceneApp {
     // WebGPU/WebGL node renderers finalize counters asynchronously. Read the
     // completed previous frame before submitting the next one.
     this.updateMetrics(deltaSeconds, elapsedSeconds);
-    const cameraChanged = this.cameraController.update();
+    const cameraChanged = this.cameraController.update(deltaSeconds);
     const cameraDistance = this.cameraController.getDistance();
     this.terrainReliefTiles?.update(
       this.camera,
